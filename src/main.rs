@@ -7,9 +7,12 @@ use winit::window::{Window, WindowId};
 
 struct State {
     window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
+
+    surface: wgpu::Surface<'static>,
+    size: winit::dpi::PhysicalSize<u32>,
+    surface_format: wgpu::TextureFormat,
 }
 
 impl State {
@@ -32,12 +35,40 @@ impl State {
             .await
             .unwrap();
 
+        let size = window.inner_size();
+        let cap = surface.get_capabilities(&adapter);
+        let surface_format = cap.formats[0];
+
         State {
             window,
-            surface,
             device,
             queue,
+            surface,
+            size,
+            surface_format,
         }
+    }
+
+    fn configure_surface(&self) {
+        self.surface.configure(
+            &self.device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: self.surface_format,
+                view_formats: vec![],
+                width: self.size.width,
+                height: self.size.height,
+                present_mode: wgpu::PresentMode::AutoVsync,
+                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                desired_maximum_frame_latency: 2,
+            },
+        );
+        println!("Surface configured: size {:?}, format {:?}", self.size, self.surface_format);
+    }
+
+    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        self.size = new_size;
+        self.configure_surface();
     }
 }
 
@@ -71,6 +102,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 state.window.request_redraw();
+            }
+            WindowEvent::Resized(new_size) => {
+                state.resize(new_size);
             }
             _ => (),
         }
