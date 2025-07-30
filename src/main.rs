@@ -63,12 +63,46 @@ impl State {
                 desired_maximum_frame_latency: 2,
             },
         );
-        println!("Surface configured: size {:?}, format {:?}", self.size, self.surface_format);
+        println!(
+            "Surface configured: size {:?}, format {:?}",
+            self.size, self.surface_format
+        );
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.size = new_size;
         self.configure_surface();
+    }
+
+    fn render(&mut self) {
+        let output = self.surface.get_current_texture().unwrap();
+
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..wgpu::RenderPassDescriptor::default()
+        });
+
+        drop(pass);
+
+        self.queue.submit([encoder.finish()]);
+        self.window.pre_present_notify();
+        output.present();
     }
 }
 
@@ -101,6 +135,7 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                state.render();
                 state.window.request_redraw();
             }
             WindowEvent::Resized(new_size) => {
