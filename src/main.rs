@@ -13,6 +13,8 @@ struct State {
     surface: wgpu::Surface<'static>,
     size: winit::dpi::PhysicalSize<u32>,
     surface_format: wgpu::TextureFormat,
+
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl State {
@@ -39,14 +41,54 @@ impl State {
         let cap = surface.get_capabilities(&adapter);
         let surface_format = cap.formats[0];
 
-        State {
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor::default());
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                ..wgpu::PrimitiveState::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
+
+        let state = State {
             window,
             device,
             queue,
             surface,
             size,
             surface_format,
-        }
+            render_pipeline,
+        };
+        state.configure_surface();
+        state
     }
 
     fn configure_surface(&self) {
@@ -85,7 +127,7 @@ impl State {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
-        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 depth_slice: None,
@@ -97,6 +139,11 @@ impl State {
             })],
             ..wgpu::RenderPassDescriptor::default()
         });
+
+        pass.set_pipeline(&self.render_pipeline);
+        // TIL: you can draw vertices without a vertex buffer
+        // Here, the vertex shader generates vertex positions from indices
+        pass.draw(0..3, 0..1);
 
         drop(pass);
 
