@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
-use winit::event::{KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 mod camera;
 mod camera_controller;
@@ -209,7 +209,7 @@ impl State {
     }
 
     fn render(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera, 0.1);
+        self.camera_controller.update_camera(&mut self.camera, 1.0);
         self.camera.update(&self.queue);
 
         let output = self.surface.get_current_texture().unwrap();
@@ -262,6 +262,11 @@ impl ApplicationHandler for App {
         let state = pollster::block_on(State::new(window.clone()));
         self.state = Some(state);
 
+        window.set_cursor_visible(false);
+        if let Err(err) = window.set_cursor_grab(CursorGrabMode::Locked) {
+            println!("Could not lock cursor: {:?}", err);
+        }
+
         window.request_redraw();
     }
 
@@ -273,7 +278,7 @@ impl ApplicationHandler for App {
     ) {
         let state = self.state.as_mut().unwrap();
 
-        if state.camera_controller.process_event(&event) {
+        if state.camera_controller.process_window_event(&event) {
             return;
         }
 
@@ -300,6 +305,17 @@ impl ApplicationHandler for App {
             }
             _ => (),
         }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        let state = self.state.as_mut().unwrap();
+
+        state.camera_controller.process_device_event(&event);
     }
 }
 

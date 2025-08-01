@@ -1,10 +1,16 @@
-use cgmath::InnerSpace;
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use cgmath::{InnerSpace, Rotation3};
+use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::camera;
 
 pub struct CameraController {
+    rotation_sensitivity: f32,
+    movement_speed: f32,
+
+    yaw: f32,
+    pitch: f32,
+
     forward: bool,
     backward: bool,
     right: bool,
@@ -14,6 +20,12 @@ pub struct CameraController {
 impl CameraController {
     pub fn new() -> CameraController {
         CameraController {
+            rotation_sensitivity: 0.1,
+            movement_speed: 0.1,
+
+            yaw: 0.0,
+            pitch: 0.0,
+
             forward: false,
             backward: false,
             right: false,
@@ -21,7 +33,7 @@ impl CameraController {
         }
     }
 
-    pub fn process_event(&mut self, event: &WindowEvent) -> bool {
+    pub fn process_window_event(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -57,7 +69,23 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&self, camera: &mut camera::Camera, speed: f32) {
+    pub fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
+        match event {
+            DeviceEvent::MouseMotion { delta } => {
+                self.yaw += delta.0 as f32 * self.rotation_sensitivity;
+                self.pitch -= delta.1 as f32 * self.rotation_sensitivity;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn update_camera(&self, camera: &mut camera::Camera, dtime: f32) {
+        let rot_yaw = cgmath::Quaternion::from_angle_y(cgmath::Deg(self.yaw));
+        let rot_pitch = cgmath::Quaternion::from_angle_x(cgmath::Deg(self.pitch));
+
+        camera.params.dir = rot_pitch * rot_yaw * cgmath::Vector3::unit_z();
+
         let mut movement = cgmath::Vector3::new(0.0, 0.0, 0.0);
         if self.forward {
             movement.z += 1.0;
@@ -76,7 +104,8 @@ impl CameraController {
             return;
         }
 
-        movement = movement.normalize() * speed;
+        movement = movement.normalize() * self.movement_speed * dtime;
+        movement = rot_yaw * movement;
         camera.params.pos += movement;
     }
 }
