@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod camera;
@@ -286,6 +287,16 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(new_size) => {
                 state.resize(new_size);
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        ..
+                    },
+                ..
+            } => {
+                event_loop.exit();
             }
             _ => (),
         }
