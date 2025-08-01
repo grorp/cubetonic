@@ -1,15 +1,19 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, DeviceId, KeyEvent, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
+
+use crate::example_chunk::EXAMPLE_CHUNK;
 
 mod camera;
 mod camera_controller;
+mod example_chunk;
+mod texture;
+mod voxels;
 
 struct State {
     window: Arc<Window>,
@@ -21,59 +25,15 @@ struct State {
     surface_format: wgpu::TextureFormat,
 
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    depth_texture: wgpu::Texture,
+    depth_texture_view: wgpu::TextureView,
+    mesh_chunk: voxels::MeshChunk,
 
     camera: camera::Camera,
     camera_controller: camera_controller::CameraController,
 
     last_frame: Instant,
 }
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
-
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRIBS: [wgpu::VertexAttribute; 2] =
-            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &ATTRIBS,
-        }
-    }
-}
-
-const VERTICES: &[Vertex] = &[
-    // Top-left
-    Vertex {
-        position: [-0.5, 0.5, 0.0],
-        color: [1.0, 0.0, 0.0],
-    },
-    // Bottom-left
-    Vertex {
-        position: [-0.5, -0.5, 0.0],
-        color: [0.0, 1.0, 0.0],
-    },
-    // Bottom-right
-    Vertex {
-        position: [0.5, -0.5, 0.0],
-        color: [0.0, 0.0, 1.0],
-    },
-    // Top-right
-    Vertex {
-        position: [0.5, 0.5, 0.0],
-        color: [1.0, 1.0, 0.0],
-    },
-];
-
-const INDICES: &[u16] = &[3, 0, 1, 3, 1, 2];
 
 impl State {
     async fn new(window: Arc<Window>) -> State {
@@ -125,16 +85,23 @@ impl State {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[Vertex::desc()],
+                buffers: &[voxels::Vertex::layout()],
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
+                // Irrlicht's fault
+                front_face: wgpu::FrontFace::Cw,
                 cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 ..wgpu::PrimitiveState::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -150,17 +117,9 @@ impl State {
             cache: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let mesh_chunk = voxels::MeshChunk::new(&device, EXAMPLE_CHUNK);
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
 
         let state = State {
             window,
@@ -172,8 +131,9 @@ impl State {
             surface_format,
 
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
+            depth_texture,
+            depth_texture_view,
+            mesh_chunk,
 
             camera,
             camera_controller,
@@ -208,6 +168,9 @@ impl State {
         self.size = new_size;
         self.configure_surface();
 
+        (self.depth_texture, self.depth_texture_view) =
+            texture::create_depth_texture(&self.device, new_size);
+
         self.camera.params.size = new_size;
         // camera update will happen before rendering either way
     }
@@ -241,14 +204,25 @@ impl State {
                     store: wgpu::StoreOp::Store,
                 },
             })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_texture_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             ..wgpu::RenderPassDescriptor::default()
         });
 
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
-        pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.draw_indexed(0..(INDICES.len() as u32), 0, 0..1);
+        pass.set_index_buffer(
+            self.mesh_chunk.index_buffer.slice(..),
+            wgpu::IndexFormat::Uint32,
+        );
+        pass.set_vertex_buffer(0, self.mesh_chunk.vertex_buffer.slice(..));
+        pass.draw_indexed(0..(self.mesh_chunk.mesh.indices.len() as u32), 0, 0..1);
 
         drop(pass);
 
@@ -305,13 +279,26 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
-                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        state: key_state,
+                        physical_key: PhysicalKey::Code(keycode),
                         ..
                     },
                 ..
-            } => {
-                event_loop.exit();
-            }
+            } => match keycode {
+                KeyCode::Escape => event_loop.exit(),
+                KeyCode::F11 => {
+                    if key_state == ElementState::Pressed {
+                        state
+                            .window
+                            .set_fullscreen(if state.window.fullscreen().is_none() {
+                                Some(Fullscreen::Borderless(None))
+                            } else {
+                                None
+                            })
+                    }
+                }
+                _ => (),
+            },
             _ => (),
         }
     }
