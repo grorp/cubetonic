@@ -136,8 +136,8 @@ impl CameraController {
         params.pos += movement;
 
         println!(
-            "[CameraController] dtime: {:.4} pos: ({:.1}, {:.1}, {:.1}) yaw: {:.1} pitch: {:.1}",
-            dtime, params.pos.x, params.pos.y, params.pos.z, self.yaw, self.pitch
+            "[CameraController] dtime: {:.4} pos: ({:.1}, {:.1}, {:.1}) dir: ({:.1}, {:.1}, {:.1}) yaw: {:.1} pitch: {:.1}",
+            dtime, params.pos.x, params.pos.y, params.pos.z, params.dir.x, params.dir.y, params.dir.z, self.yaw, self.pitch
         );
     }
 }
