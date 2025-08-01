@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
@@ -25,6 +26,8 @@ struct State {
 
     camera: camera::Camera,
     camera_controller: camera_controller::CameraController,
+
+    last_frame: Instant,
 }
 
 #[repr(C)]
@@ -175,6 +178,8 @@ impl State {
 
             camera,
             camera_controller,
+
+            last_frame: Instant::now(),
         };
         state.configure_surface();
         state
@@ -209,7 +214,12 @@ impl State {
     }
 
     fn render(&mut self) {
-        self.camera_controller.update_camera(&mut self.camera, 1.0);
+        let now = Instant::now();
+        let dtime = (now - self.last_frame).as_secs_f32();
+        self.last_frame = now;
+
+        self.camera_controller
+            .update_camera(&mut self.camera.params, dtime);
         self.camera.update(&self.queue);
 
         let output = self.surface.get_current_texture().unwrap();

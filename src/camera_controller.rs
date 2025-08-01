@@ -24,7 +24,7 @@ impl CameraController {
     pub fn new() -> CameraController {
         CameraController {
             rotation_sensitivity: 0.1,
-            movement_speed: 0.1,
+            movement_speed: 4.0,
 
             yaw: 0.0,
             pitch: 0.0,
@@ -99,11 +99,11 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&self, camera: &mut camera::Camera, dtime: f32) {
+    pub fn update_camera(&self, params: &mut camera::CameraParams, dtime: f32) {
         let rot_yaw = cgmath::Quaternion::from_angle_y(cgmath::Deg(self.yaw));
         let rot_pitch = cgmath::Quaternion::from_angle_x(cgmath::Deg(self.pitch));
 
-        camera.params.dir = rot_yaw * rot_pitch * cgmath::Vector3::unit_z();
+        params.dir = rot_yaw * rot_pitch * cgmath::Vector3::unit_z();
 
         let mut movement = cgmath::Vector3::new(0.0, 0.0, 0.0);
 
@@ -133,11 +133,11 @@ impl CameraController {
         }
 
         movement = movement * self.movement_speed * dtime;
-        camera.params.pos += movement;
+        params.pos += movement;
 
         println!(
-            "[CameraController] pos: ({:.1}, {:.1}, {:.1}) yaw: {:.1} pitch: {:.1}",
-            camera.params.pos.x, camera.params.pos.y, camera.params.pos.z, self.yaw, self.pitch
+            "[CameraController] dtime: {:.4} pos: ({:.1}, {:.1}, {:.1}) yaw: {:.1} pitch: {:.1}",
+            dtime, params.pos.x, params.pos.y, params.pos.z, self.yaw, self.pitch
         );
     }
 }
