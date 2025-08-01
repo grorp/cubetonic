@@ -7,6 +7,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 mod camera;
+mod camera_controller;
 
 struct State {
     window: Arc<Window>,
@@ -22,6 +23,7 @@ struct State {
     index_buffer: wgpu::Buffer,
 
     camera: camera::Camera,
+    camera_controller: camera_controller::CameraController,
 }
 
 #[repr(C)]
@@ -101,6 +103,7 @@ impl State {
                 size,
             },
         );
+        let camera_controller = camera_controller::CameraController::new();
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -170,6 +173,7 @@ impl State {
             index_buffer,
 
             camera,
+            camera_controller,
         };
         state.configure_surface();
         state
@@ -200,10 +204,13 @@ impl State {
         self.configure_surface();
 
         self.camera.params.size = new_size;
-        self.camera.update(&self.queue);
+        // camera update will happen before rendering either way
     }
 
     fn render(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera, 0.1);
+        self.camera.update(&self.queue);
+
         let output = self.surface.get_current_texture().unwrap();
 
         let view = output
@@ -264,6 +271,10 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         let state = self.state.as_mut().unwrap();
+
+        if state.camera_controller.process_event(&event) {
+            return;
+        }
 
         match event {
             WindowEvent::CloseRequested => {
