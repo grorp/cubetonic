@@ -1,22 +1,24 @@
+use std::f32::consts::PI;
 use wgpu::util::DeviceExt;
 
 #[derive(Debug)]
 pub struct CameraParams {
-    pub pos: cgmath::Point3<f32>,
-    pub dir: cgmath::Vector3<f32>,
+    pub pos: glam::Vec3,
+    pub dir: glam::Vec3,
     pub size: winit::dpi::PhysicalSize<u32>,
 }
 
 impl CameraParams {
-    fn build_view_proj_matrix(&self) -> cgmath::Matrix4<f32> {
-        let view: cgmath::Matrix4<f32> =
-            cgmath::Matrix4::look_to_rh(self.pos, self.dir, cgmath::Vector3::unit_y());
-        let proj = cgmath::perspective(
-            cgmath::Deg(72.0),
+    fn build_view_proj_matrix(&self) -> glam::Mat4 {
+        let view = glam::Mat4::look_to_lh(self.pos, self.dir, glam::Vec3::Y);
+
+        let proj = glam::Mat4::perspective_lh(
+            PI * 0.4,
             self.size.width as f32 / self.size.height as f32,
             0.1,
             1000.0,
         );
+
         proj * view
     }
 }
@@ -24,7 +26,7 @@ impl CameraParams {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct CameraUniform {
-    view_proj: [[f32; 4]; 4],
+    view_proj: [f32; 16],
 }
 
 #[derive(Debug)]
@@ -39,7 +41,7 @@ pub struct Camera {
 impl Camera {
     pub fn new(device: &wgpu::Device, params: CameraParams) -> Camera {
         let uniform = CameraUniform {
-            view_proj: params.build_view_proj_matrix().into(),
+            view_proj: params.build_view_proj_matrix().to_cols_array(),
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -81,7 +83,7 @@ impl Camera {
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue) {
-        self.uniform.view_proj = self.params.build_view_proj_matrix().into();
+        self.uniform.view_proj = self.params.build_view_proj_matrix().to_cols_array();
 
         queue.write_buffer(
             &self.uniform_buffer,

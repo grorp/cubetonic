@@ -1,4 +1,3 @@
-use cgmath::{InnerSpace, Rotation3};
 use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -86,8 +85,10 @@ impl CameraController {
     pub fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
         match event {
             DeviceEvent::MouseMotion { delta } => {
-                // TODO: yaw/pitch are inverted(?)
-                self.yaw -= delta.0 as f32 * self.rotation_sensitivity;
+                // yaw is flipped compared to how it is applied in the
+                // "event handler" by Luanti, but Luanti actually flips it
+                // later in camera.cpp
+                self.yaw += delta.0 as f32 * self.rotation_sensitivity;
                 self.pitch += delta.1 as f32 * self.rotation_sensitivity;
 
                 // don't allow the camera to flip over :)
@@ -100,12 +101,12 @@ impl CameraController {
     }
 
     pub fn update_camera(&self, params: &mut camera::CameraParams, dtime: f32) {
-        let rot_yaw = cgmath::Quaternion::from_angle_y(cgmath::Deg(self.yaw));
-        let rot_pitch = cgmath::Quaternion::from_angle_x(cgmath::Deg(self.pitch));
+        let rot_yaw = glam::Quat::from_rotation_y(self.yaw.to_radians());
+        let rot_pitch = glam::Quat::from_rotation_x(self.pitch.to_radians());
 
-        params.dir = rot_yaw * rot_pitch * cgmath::Vector3::unit_z();
+        params.dir = rot_yaw * rot_pitch * glam::Vec3::Z;
 
-        let mut movement = cgmath::Vector3::new(0.0, 0.0, 0.0);
+        let mut movement = glam::Vec3::ZERO;
 
         if self.forward {
             movement.z += 1.0;
@@ -113,15 +114,14 @@ impl CameraController {
         if self.backward {
             movement.z -= 1.0;
         }
-        // TODO: x axis is inverted
         if self.right {
-            movement.x -= 1.0;
-        }
-        if self.left {
             movement.x += 1.0;
         }
+        if self.left {
+            movement.x -= 1.0;
+        }
         // avoids NaN from normalize
-        if movement.magnitude2() != 0.0 {
+        if movement.length_squared() != 0.0 {
             movement = rot_yaw * movement.normalize();
         }
 
@@ -137,7 +137,15 @@ impl CameraController {
 
         println!(
             "[CameraController] dtime: {:.4} pos: ({:.1}, {:.1}, {:.1}) dir: ({:.1}, {:.1}, {:.1}) yaw: {:.1} pitch: {:.1}",
-            dtime, params.pos.x, params.pos.y, params.pos.z, params.dir.x, params.dir.y, params.dir.z, self.yaw, self.pitch
+            dtime,
+            params.pos.x,
+            params.pos.y,
+            params.pos.z,
+            params.dir.x,
+            params.dir.y,
+            params.dir.z,
+            self.yaw,
+            self.pitch
         );
     }
 }
