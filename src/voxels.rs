@@ -122,23 +122,22 @@ fn generate_mesh(chunk: &Chunk) -> Mesh {
 fn generate_mesh_single(chunk: &Chunk, mesh: &mut Mesh, pos: I16Vec3) {
     for (face_index, dir) in CUBE_FACE_DIRS.iter().enumerate() {
         let n_pos = pos + dir;
-        if let Some(n_voxel) = chunk.get(&n_pos) {
-            if !n_voxel {
-                let index_offset = mesh.vertices.len() as u32;
+        let n_voxel = chunk.get(&n_pos).unwrap_or(false);
+        if !n_voxel {
+            let index_offset = mesh.vertices.len() as u32;
 
-                let from_vertex = face_index * 4;
-                let to_vertex = from_vertex + 4;
-                let vertices = CUBE_VERTICES[from_vertex..to_vertex]
-                    .iter()
-                    .map(|vertex| Vertex {
-                        position: pos.as_vec3() + vertex.position,
-                        ..*vertex
-                    });
-                mesh.vertices.extend(vertices);
+            let from_vertex = face_index * 4;
+            let to_vertex = from_vertex + 4;
+            let vertices = CUBE_VERTICES[from_vertex..to_vertex]
+                .iter()
+                .map(|vertex| Vertex {
+                    position: pos.as_vec3() + vertex.position,
+                    ..*vertex
+                });
+            mesh.vertices.extend(vertices);
 
-                let indices = QUAD_INDICES.iter().map(|index| index_offset + index);
-                mesh.indices.extend(indices);
-            }
+            let indices = QUAD_INDICES.iter().map(|index| index_offset + index);
+            mesh.indices.extend(indices);
         }
     }
 }
