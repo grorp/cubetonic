@@ -5,7 +5,8 @@ use glam::{I16Vec3, Vec3};
 use luanti_core::MapBlockNodes;
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
-    ClientReadySpec, FirstSrpSpec, Init2Spec, InitSpec, PlayerPosCommand, ToServerCommand,
+    ClientReadySpec, FirstSrpSpec, GotBlocksSpec, Init2Spec, InitSpec, PlayerPosCommand,
+    ToServerCommand,
 };
 use luanti_protocol::commands::server_to_client::ToClientCommand;
 use luanti_protocol::types::PlayerPos;
@@ -125,6 +126,8 @@ impl LuantiClientRunner {
                                 // just give a high value so we get much data
                                 fov: PI,
                                 // just give a high value so we get much data
+                                // TODO: we don't get much data. might have to send pos/look dir
+                                // updates to get any reasonable amount.
                                 wanted_range: 255,
                                 camera_inverted: false,
                                 movement_speed: 0.0,
@@ -134,6 +137,12 @@ impl LuantiClientRunner {
                 }
 
                 ToClientCommand::Blockdata(spec) => {
+                    // TODO: do I or does luanti-protocol do this?
+                    // TODO: Luanti only sends this after meshgen? batching?
+                    self.client
+                        .send(ToServerCommand::GotBlocks(Box::new(GotBlocksSpec {
+                            blocks: vec![spec.pos],
+                        })))?;
                     self.event_loop_proxy
                         .send_event(LuantiClientEvent::Blockdata {
                             pos: spec.pos,
