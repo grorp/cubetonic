@@ -5,7 +5,7 @@ use glam::I16Vec3;
 use luanti_core::MapBlockNodes;
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
-    FirstSrpSpec, Init2Spec, InitSpec, ToServerCommand,
+    ClientReadySpec, FirstSrpSpec, Init2Spec, InitSpec, ToServerCommand,
 };
 use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
@@ -49,8 +49,8 @@ impl LuantiClientRunner {
         self.client.send(ToServerCommand::Init(Box::new(InitSpec {
             serialization_ver_max: 29,
             supp_compr_modes: 0, // unused
-            min_net_proto_version: 37,
-            max_net_proto_version: 46, // appears to be the maximum supported by luanti-protocol
+            min_net_proto_version: 46,
+            max_net_proto_version: 46, // appears to be the only version supported by luanti-protocol
             user_name: user_name.clone(),
         })))?;
 
@@ -82,6 +82,18 @@ impl LuantiClientRunner {
                     self.client
                         .send(ToServerCommand::Init2(Box::new(Init2Spec {
                             lang: Some(String::from("en")),
+                        })))?;
+
+                    // TODO: wait for item definitions, wait for media announce, request media, wait for media, etc. first
+
+                    self.client
+                        .send(ToServerCommand::ClientReady(Box::new(ClientReadySpec {
+                            major_ver: 0,
+                            minor_ver: 1,
+                            patch_ver: 0,
+                            reserved: 0,
+                            full_ver: String::from("Cubetonic 0.1.0"),
+                            formspec_ver: Some(8), // corresponds to proto ver 46
                         })))?;
                 }
 
