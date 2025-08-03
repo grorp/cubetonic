@@ -135,6 +135,7 @@ impl CameraController {
         movement = movement * self.movement_speed * dtime;
         params.pos += movement;
 
+        /*
         println!(
             "[CameraController] dtime: {:.4} pos: ({:.1}, {:.1}, {:.1}) dir: ({:.1}, {:.1}, {:.1}) yaw: {:.1} pitch: {:.1}",
             dtime,
@@ -147,5 +148,6 @@ impl CameraController {
             self.yaw,
             self.pitch
         );
+        */
     }
 }

@@ -1,17 +1,18 @@
-use std::sync::Arc;
-use std::time::Instant;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use luanti_protocol::LuantiClient;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
-use crate::example_chunk::EXAMPLE_CHUNK;
-
 mod camera;
 mod camera_controller;
 mod example_chunk;
+mod luanti_client;
 mod texture;
 mod voxels;
 
@@ -33,10 +34,15 @@ struct State {
     camera_controller: camera_controller::CameraController,
 
     last_frame: Instant,
+
+    luanti_shared: luanti_client::LuantiClientDataShared,
 }
 
 impl State {
-    async fn new(window: Arc<Window>) -> State {
+    async fn new(
+        window: Arc<Window>,
+        luanti_shared: luanti_client::LuantiClientDataShared,
+    ) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -117,7 +123,7 @@ impl State {
             cache: None,
         });
 
-        let mesh_chunk = voxels::MeshChunk::new(&device, EXAMPLE_CHUNK);
+        let mesh_chunk = voxels::MeshChunk::new(&device, example_chunk::EXAMPLE_CHUNK);
 
         let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
 
@@ -139,6 +145,8 @@ impl State {
             camera_controller,
 
             last_frame: Instant::now(),
+
+            luanti_shared,
         };
         state.configure_surface();
         state
@@ -232,9 +240,10 @@ impl State {
     }
 }
 
-#[derive(Default)]
 struct App {
     state: Option<State>,
+    // temporary, used to hold the LuantiClientDataShared until State is created
+    luanti_shared: Option<luanti_client::LuantiClientDataShared>,
 }
 
 impl ApplicationHandler for App {
@@ -242,7 +251,10 @@ impl ApplicationHandler for App {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
-        let state = pollster::block_on(State::new(window.clone()));
+        let state = pollster::block_on(State::new(
+            window.clone(),
+            self.luanti_shared.take().unwrap(),
+        ));
         self.state = Some(state);
 
         window.set_cursor_visible(false);
@@ -315,12 +327,35 @@ impl ApplicationHandler for App {
     }
 }
 
+#[tokio::main]
+async fn spawn_client(luanti_shared: luanti_client::LuantiClientDataShared) {
+    let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+    println!("Connecting to Luanti server at {}...", addr);
+    let luanti_client = LuantiClient::connect(addr).await.unwrap();
+
+    luanti_client::LuantiClientRunner::spawn(luanti_client, luanti_shared);
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+    }
+}
+
 fn main() {
     env_logger::init();
+
+    let luanti_shared = Arc::new(Mutex::new(luanti_client::LuantiClientData::default()));
+
+    let s = luanti_shared.clone();
+    std::thread::spawn(move || {
+        spawn_client(s);
+    });
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App::default();
+    let mut app = App {
+        state: None,
+        luanti_shared: Some(luanti_shared),
+    };
     event_loop.run_app(&mut app).unwrap();
 }
