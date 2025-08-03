@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use glam::I16Vec3;
 use luanti_protocol::LuantiClient;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
@@ -9,9 +11,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
+use luanti_client::{LuantiClientEvent, LuantiClientEventProxy, LuantiClientRunner};
+
+use voxels::CHUNK_SIZE;
+
 mod camera;
 mod camera_controller;
-mod example_chunk;
 mod luanti_client;
 mod texture;
 mod voxels;
@@ -28,12 +33,13 @@ struct State {
     render_pipeline: wgpu::RenderPipeline,
     depth_texture: wgpu::Texture,
     depth_texture_view: wgpu::TextureView,
-    mesh_chunk: voxels::MeshChunk,
 
     camera: camera::Camera,
     camera_controller: camera_controller::CameraController,
 
     last_frame: Instant,
+
+    mesh_chunks: HashMap<I16Vec3, voxels::MeshChunk>,
 }
 
 impl State {
@@ -118,8 +124,6 @@ impl State {
             cache: None,
         });
 
-        let mesh_chunk = voxels::MeshChunk::new(&device, example_chunk::EXAMPLE_CHUNK);
-
         let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
 
         let state = State {
@@ -134,12 +138,13 @@ impl State {
             render_pipeline,
             depth_texture,
             depth_texture_view,
-            mesh_chunk,
 
             camera,
             camera_controller,
 
             last_frame: Instant::now(),
+
+            mesh_chunks: HashMap::new(),
         };
         state.configure_surface();
         state
@@ -218,12 +223,12 @@ impl State {
 
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
-        pass.set_index_buffer(
-            self.mesh_chunk.index_buffer.slice(..),
-            wgpu::IndexFormat::Uint32,
-        );
-        pass.set_vertex_buffer(0, self.mesh_chunk.vertex_buffer.slice(..));
-        pass.draw_indexed(0..(self.mesh_chunk.mesh.indices.len() as u32), 0, 0..1);
+
+        for (_, chunk) in &self.mesh_chunks {
+            pass.set_index_buffer(chunk.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, chunk.vertex_buffer.slice(..));
+            pass.draw_indexed(0..(chunk.mesh.indices.len() as u32), 0, 0..1);
+        }
 
         drop(pass);
 
@@ -238,7 +243,7 @@ struct App {
     state: Option<State>,
 }
 
-impl ApplicationHandler<luanti_client::LuantiClientEvent> for App {
+impl ApplicationHandler<LuantiClientEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
@@ -300,6 +305,7 @@ impl ApplicationHandler<luanti_client::LuantiClientEvent> for App {
                 }
                 _ => (),
             },
+
             _ => (),
         }
     }
@@ -314,15 +320,47 @@ impl ApplicationHandler<luanti_client::LuantiClientEvent> for App {
 
         state.camera_controller.process_device_event(&event);
     }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: LuantiClientEvent) {
+        let state = self.state.as_mut().unwrap();
+
+        match event {
+            LuantiClientEvent::Blockdata { pos, data } => {
+                let mut my_data = [[[true; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+                let mut index: usize = 0;
+
+                for z in 0..CHUNK_SIZE {
+                    for y in 0..CHUNK_SIZE {
+                        for x in 0..CHUNK_SIZE {
+                            let node = data[luanti_core::MapNodeIndex::from(index)];
+                            my_data[z][y][x] = node.content_id != luanti_core::ContentId::AIR;
+                            index += 1;
+                        }
+                    }
+                }
+
+                let mesh_chunk =
+                    voxels::MeshChunk::new(&state.device, voxels::Chunk { pos, data: my_data });
+
+                if let Some(mesh_chunk) = mesh_chunk {
+                    // also replaces if necessary
+                    state.mesh_chunks.insert(pos, mesh_chunk);
+                } else {
+                    // no-op if non-existent
+                    state.mesh_chunks.remove(&pos);
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
-async fn spawn_client(event_loop_proxy: luanti_client::LuantiClientEventProxy) {
+async fn spawn_client(event_loop_proxy: LuantiClientEventProxy) {
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
     println!("Connecting to Luanti server at {}...", addr);
     let luanti_client = LuantiClient::connect(addr).await.unwrap();
 
-    luanti_client::LuantiClientRunner::spawn(luanti_client, event_loop_proxy);
+    LuantiClientRunner::spawn(luanti_client, event_loop_proxy);
 
     loop {
         tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -332,7 +370,7 @@ async fn spawn_client(event_loop_proxy: luanti_client::LuantiClientEventProxy) {
 fn main() {
     env_logger::init();
 
-    let event_loop = EventLoop::<luanti_client::LuantiClientEvent>::with_user_event()
+    let event_loop = EventLoop::<LuantiClientEvent>::with_user_event()
         .build()
         .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);

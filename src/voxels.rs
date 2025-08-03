@@ -1,9 +1,10 @@
 use glam::{I16Vec3, Vec3};
 use wgpu::util::DeviceExt;
 
-pub const CHUNK_SIZE: usize = 32;
+pub const CHUNK_SIZE: usize = 16;
 
 pub struct Chunk {
+    pub pos: I16Vec3,
     // To be indexed as data[z][y][x]
     pub data: [[[bool; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
 }
@@ -23,6 +24,19 @@ impl Chunk {
         } else {
             None
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        for z_slice in self.data {
+            for y_slice in z_slice {
+                for voxel in y_slice {
+                    if voxel {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 }
 
@@ -122,6 +136,12 @@ fn generate_mesh(chunk: &Chunk) -> Mesh {
 fn generate_mesh_single(chunk: &Chunk, mesh: &mut Mesh, pos: I16Vec3) {
     for (face_index, dir) in CUBE_FACE_DIRS.iter().enumerate() {
         let n_pos = pos + dir;
+        /*
+        let n_voxel = chunk.get(&n_pos);
+        if let Some(n_voxel) = n_voxel
+            && !n_voxel
+        */
+        // TODO: deal with unloaded neighbors properly, re-mesh once they become loaded
         let n_voxel = chunk.get(&n_pos).unwrap_or(false);
         if !n_voxel {
             let index_offset = mesh.vertices.len() as u32;
@@ -131,7 +151,9 @@ fn generate_mesh_single(chunk: &Chunk, mesh: &mut Mesh, pos: I16Vec3) {
             let vertices = CUBE_VERTICES[from_vertex..to_vertex]
                 .iter()
                 .map(|vertex| Vertex {
-                    position: pos.as_vec3() + vertex.position,
+                    position: (chunk.pos.as_vec3() * CHUNK_SIZE as f32)
+                        + pos.as_vec3()
+                        + vertex.position,
                     ..*vertex
                 });
             mesh.vertices.extend(vertices);
@@ -151,8 +173,20 @@ pub struct MeshChunk {
 }
 
 impl MeshChunk {
-    pub fn new(device: &wgpu::Device, chunk: Chunk) -> MeshChunk {
+    pub fn new(device: &wgpu::Device, chunk: Chunk) -> Option<MeshChunk> {
+        if chunk.is_empty() {
+            // wgpu doesn't allow us to have empty buffer slices :)
+            return None;
+        }
+
         let mesh = generate_mesh(&chunk);
+
+        /*
+        if mesh.indices.is_empty() {
+            // still possible if neighbors are unloaded
+            return None;
+        }
+        */
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: None,
@@ -166,11 +200,11 @@ impl MeshChunk {
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        MeshChunk {
+        Some(MeshChunk {
             chunk,
             mesh,
             vertex_buffer,
             index_buffer,
-        }
+        })
     }
 }

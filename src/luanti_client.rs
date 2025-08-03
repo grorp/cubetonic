@@ -1,13 +1,35 @@
+use std::f32::consts::PI;
+use std::fmt::Debug;
+
+use glam::{I16Vec3, Vec3};
+use luanti_core::MapBlockNodes;
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
-    ClientReadySpec, FirstSrpSpec, Init2Spec, InitSpec, ToServerCommand,
+    ClientReadySpec, FirstSrpSpec, Init2Spec, InitSpec, PlayerPosCommand, ToServerCommand,
 };
 use luanti_protocol::commands::server_to_client::ToClientCommand;
+use luanti_protocol::types::PlayerPos;
 use rand::Rng;
 
 pub type LuantiClientEventProxy = winit::event_loop::EventLoopProxy<LuantiClientEvent>;
 
-pub enum LuantiClientEvent {}
+pub enum LuantiClientEvent {
+    Blockdata { pos: I16Vec3, data: MapBlockNodes },
+}
+
+// TODO: MapBlockNodes doesn't implement Debug, so #[derive(Debug)] on LuantiClientEvent
+// is not possible, but we need Debug implemented for Result ? or .unwrap to work
+impl Debug for LuantiClientEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Blockdata { pos, data } => f
+                .debug_struct("Blockdata")
+                .field("pos", pos)
+                .field("data", &"...")
+                .finish(),
+        }
+    }
+}
 
 pub struct LuantiClientRunner {
     client: LuantiClient,
@@ -90,19 +112,33 @@ impl LuantiClientRunner {
                             full_ver: String::from("Cubetonic 0.1.0"),
                             formspec_ver: Some(8), // corresponds to proto ver 46
                         })))?;
+
+                    self.client
+                        .send(ToServerCommand::Playerpos(Box::new(PlayerPosCommand {
+                            player_pos: PlayerPos {
+                                position: spec.player_pos,
+                                speed: Vec3::ZERO,
+                                pitch: 0.0,
+                                yaw: 0.0,
+                                keys_pressed: 0,
+                                // expected to be max of horizontal and vertical fov
+                                // just give a high value so we get much data
+                                fov: PI,
+                                // just give a high value so we get much data
+                                wanted_range: 255,
+                                camera_inverted: false,
+                                movement_speed: 0.0,
+                                movement_direction: 0.0,
+                            },
+                        })))?;
                 }
 
                 ToClientCommand::Blockdata(spec) => {
-                    /*
-                    let mut data = self.data.lock().unwrap();
-
-                    if !data.mapblocks.contains_key(&spec.pos) {
-                        data.mapblocks
-                            .insert(spec.pos, MapBlockNodes(spec.block.nodes.nodes));
-                    } else {
-                        data.mapblocks.get_mut(&spec.pos).unwrap().0 = spec.block.nodes.nodes;
-                    }
-                    */
+                    self.event_loop_proxy
+                        .send_event(LuantiClientEvent::Blockdata {
+                            pos: spec.pos,
+                            data: MapBlockNodes(spec.block.nodes.nodes),
+                        })?;
                 }
                 _ => (),
             }

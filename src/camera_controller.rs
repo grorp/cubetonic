@@ -23,7 +23,7 @@ impl CameraController {
     pub fn new() -> CameraController {
         CameraController {
             rotation_sensitivity: 0.1,
-            movement_speed: 4.0,
+            movement_speed: 20.0,
 
             yaw: 0.0,
             pitch: 0.0,
