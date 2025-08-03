@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use luanti_protocol::LuantiClient;
@@ -34,15 +34,10 @@ struct State {
     camera_controller: camera_controller::CameraController,
 
     last_frame: Instant,
-
-    luanti_shared: luanti_client::LuantiClientDataShared,
 }
 
 impl State {
-    async fn new(
-        window: Arc<Window>,
-        luanti_shared: luanti_client::LuantiClientDataShared,
-    ) -> State {
+    async fn new(window: Arc<Window>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -145,8 +140,6 @@ impl State {
             camera_controller,
 
             last_frame: Instant::now(),
-
-            luanti_shared,
         };
         state.configure_surface();
         state
@@ -240,21 +233,17 @@ impl State {
     }
 }
 
+#[derive(Default)]
 struct App {
     state: Option<State>,
-    // temporary, used to hold the LuantiClientDataShared until State is created
-    luanti_shared: Option<luanti_client::LuantiClientDataShared>,
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<luanti_client::LuantiClientEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
-        let state = pollster::block_on(State::new(
-            window.clone(),
-            self.luanti_shared.take().unwrap(),
-        ));
+        let state = pollster::block_on(State::new(window.clone()));
         self.state = Some(state);
 
         window.set_cursor_visible(false);
@@ -328,12 +317,12 @@ impl ApplicationHandler for App {
 }
 
 #[tokio::main]
-async fn spawn_client(luanti_shared: luanti_client::LuantiClientDataShared) {
+async fn spawn_client(event_loop_proxy: luanti_client::LuantiClientEventProxy) {
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
     println!("Connecting to Luanti server at {}...", addr);
     let luanti_client = LuantiClient::connect(addr).await.unwrap();
 
-    luanti_client::LuantiClientRunner::spawn(luanti_client, luanti_shared);
+    luanti_client::LuantiClientRunner::spawn(luanti_client, event_loop_proxy);
 
     loop {
         tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -343,19 +332,16 @@ async fn spawn_client(luanti_shared: luanti_client::LuantiClientDataShared) {
 fn main() {
     env_logger::init();
 
-    let luanti_shared = Arc::new(Mutex::new(luanti_client::LuantiClientData::default()));
-
-    let s = luanti_shared.clone();
-    std::thread::spawn(move || {
-        spawn_client(s);
-    });
-
-    let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::<luanti_client::LuantiClientEvent>::with_user_event()
+        .build()
+        .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App {
-        state: None,
-        luanti_shared: Some(luanti_shared),
-    };
+    let proxy = event_loop.create_proxy();
+    std::thread::spawn(move || {
+        spawn_client(proxy);
+    });
+
+    let mut app = App::default();
     event_loop.run_app(&mut app).unwrap();
 }

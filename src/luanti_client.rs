@@ -1,8 +1,3 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-use glam::I16Vec3;
-use luanti_core::MapBlockNodes;
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
     ClientReadySpec, FirstSrpSpec, Init2Spec, InitSpec, ToServerCommand,
@@ -10,23 +5,21 @@ use luanti_protocol::commands::client_to_server::{
 use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
 
+pub type LuantiClientEventProxy = winit::event_loop::EventLoopProxy<LuantiClientEvent>;
+
+pub enum LuantiClientEvent {}
+
 pub struct LuantiClientRunner {
     client: LuantiClient,
-    data: LuantiClientDataShared,
-}
-
-pub type LuantiClientDataShared = Arc<Mutex<LuantiClientData>>;
-
-#[derive(Default)]
-pub struct LuantiClientData {
-    pub connected: bool,
-    // TODO: cannot use MapBlockPos ergonomically since inner field is private :\
-    pub mapblocks: HashMap<I16Vec3, MapBlockNodes>,
+    event_loop_proxy: LuantiClientEventProxy,
 }
 
 impl LuantiClientRunner {
-    pub fn spawn(client: LuantiClient, data: LuantiClientDataShared) {
-        let mut runner = LuantiClientRunner { client, data };
+    pub fn spawn(client: LuantiClient, event_loop_proxy: LuantiClientEventProxy) {
+        let mut runner = LuantiClientRunner {
+            client,
+            event_loop_proxy,
+        };
         tokio::spawn(async move { runner.run().await });
     }
 
@@ -36,8 +29,10 @@ impl LuantiClientRunner {
             Err(err) => {
                 println!("Disconnected: {}", err);
 
+                /*
                 let mut data = self.data.lock().unwrap();
                 data.connected = false;
+                */
             }
         }
     }
@@ -98,6 +93,7 @@ impl LuantiClientRunner {
                 }
 
                 ToClientCommand::Blockdata(spec) => {
+                    /*
                     let mut data = self.data.lock().unwrap();
 
                     if !data.mapblocks.contains_key(&spec.pos) {
@@ -106,6 +102,7 @@ impl LuantiClientRunner {
                     } else {
                         data.mapblocks.get_mut(&spec.pos).unwrap().0 = spec.block.nodes.nodes;
                     }
+                    */
                 }
                 _ => (),
             }
