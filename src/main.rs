@@ -5,13 +5,14 @@ use std::time::{Duration, Instant};
 
 use glam::I16Vec3;
 use luanti_protocol::LuantiClient;
+use tokio::sync::mpsc;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
-use luanti_client::{LuantiClientEvent, LuantiClientEventProxy, LuantiClientRunner};
+use luanti_client::{FromNetworkEvent, FromNetworkEventProxy, LuantiClientRunner, ToNetworkEvent};
 
 use voxels::CHUNK_SIZE;
 
@@ -38,12 +39,15 @@ struct State {
     camera_controller: camera_controller::CameraController,
 
     last_frame: Instant,
+    last_send: Instant,
 
     mesh_chunks: HashMap<I16Vec3, voxels::MeshChunk>,
+
+    network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
 }
 
 impl State {
-    async fn new(window: Arc<Window>) -> State {
+    async fn new(window: Arc<Window>, network_tx: mpsc::UnboundedSender<ToNetworkEvent>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -143,8 +147,11 @@ impl State {
             camera_controller,
 
             last_frame: Instant::now(),
+            last_send: Instant::now(),
 
             mesh_chunks: HashMap::new(),
+
+            network_tx,
         };
         state.configure_surface();
         state
@@ -185,6 +192,18 @@ impl State {
         let now = Instant::now();
         let dtime = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
+
+        let send_dtime = (now - self.last_send).as_secs_f32();
+        if send_dtime >= 0.1 {
+            self.network_tx
+                .send(ToNetworkEvent::PlayerPos {
+                    pos: self.camera.params.pos,
+                    yaw: self.camera_controller.yaw,
+                    pitch: self.camera_controller.pitch,
+                })
+                .unwrap();
+            self.last_send = now;
+        }
 
         self.camera_controller
             .update_camera(&mut self.camera.params, dtime);
@@ -238,17 +257,27 @@ impl State {
     }
 }
 
-#[derive(Default)]
 struct App {
     state: Option<State>,
+    // temporary holder until State is created
+    network_tx: Option<mpsc::UnboundedSender<ToNetworkEvent>>,
 }
 
-impl ApplicationHandler<LuantiClientEvent> for App {
+impl App {
+    fn new(network_tx: mpsc::UnboundedSender<ToNetworkEvent>) -> App {
+        App {
+            state: None,
+            network_tx: Some(network_tx),
+        }
+    }
+}
+
+impl ApplicationHandler<FromNetworkEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
-        let state = pollster::block_on(State::new(window.clone()));
+        let state = pollster::block_on(State::new(window.clone(), self.network_tx.take().unwrap()));
         self.state = Some(state);
 
         window.set_cursor_visible(false);
@@ -321,11 +350,11 @@ impl ApplicationHandler<LuantiClientEvent> for App {
         state.camera_controller.process_device_event(&event);
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: LuantiClientEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: FromNetworkEvent) {
         let state = self.state.as_mut().unwrap();
 
         match event {
-            LuantiClientEvent::Blockdata { pos, data } => {
+            FromNetworkEvent::Blockdata { pos, data } => {
                 let mut my_data = [[[true; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
                 let mut index: usize = 0;
 
@@ -355,12 +384,12 @@ impl ApplicationHandler<LuantiClientEvent> for App {
 }
 
 #[tokio::main]
-async fn spawn_client(event_loop_proxy: LuantiClientEventProxy) {
+async fn spawn_client(tx: FromNetworkEventProxy, rx: mpsc::UnboundedReceiver<ToNetworkEvent>) {
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
     println!("Connecting to Luanti server at {}...", addr);
     let luanti_client = LuantiClient::connect(addr).await.unwrap();
 
-    LuantiClientRunner::spawn(luanti_client, event_loop_proxy);
+    LuantiClientRunner::spawn(luanti_client, tx, rx);
 
     loop {
         tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -370,16 +399,18 @@ async fn spawn_client(event_loop_proxy: LuantiClientEventProxy) {
 fn main() {
     env_logger::init();
 
-    let event_loop = EventLoop::<LuantiClientEvent>::with_user_event()
+    let event_loop = EventLoop::<FromNetworkEvent>::with_user_event()
         .build()
         .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let proxy = event_loop.create_proxy();
+    let network_tx = event_loop.create_proxy();
+    let (client_tx, network_rx) = mpsc::unbounded_channel();
+
     std::thread::spawn(move || {
-        spawn_client(proxy);
+        spawn_client(network_tx, network_rx);
     });
 
-    let mut app = App::default();
+    let mut app = App::new(client_tx);
     event_loop.run_app(&mut app).unwrap();
 }
