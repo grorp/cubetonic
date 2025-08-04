@@ -167,7 +167,9 @@ impl LuantiClientRunner {
                             position: pos * BS,
                             speed: Vec3::ZERO,
                             pitch: pitch,
-                            yaw: yaw,
+                            // stored inverted compared to Luanti, Luanti only
+                            // inverts it when applying e.g. in camera.cpp
+                            yaw: -yaw,
                             keys_pressed: 0,
                             // expected to be max of horizontal and vertical fov
                             // just give a high value so we get much data
