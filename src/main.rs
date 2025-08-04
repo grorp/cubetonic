@@ -43,11 +43,16 @@ struct State {
 
     mesh_chunks: HashMap<I16Vec3, voxels::MeshChunk>,
 
+    rt: Arc<tokio::runtime::Runtime>,
     network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
 }
 
 impl State {
-    async fn new(window: Arc<Window>, network_tx: mpsc::UnboundedSender<ToNetworkEvent>) -> State {
+    async fn new(
+        window: Arc<Window>,
+        rt: Arc<tokio::runtime::Runtime>,
+        network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
+    ) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -151,6 +156,7 @@ impl State {
 
             mesh_chunks: HashMap::new(),
 
+            rt,
             network_tx,
         };
         state.configure_surface();
@@ -259,14 +265,21 @@ impl State {
 
 struct App {
     state: Option<State>,
+
+    // temporary holder until State is created
+    rt: Option<Arc<tokio::runtime::Runtime>>,
     // temporary holder until State is created
     network_tx: Option<mpsc::UnboundedSender<ToNetworkEvent>>,
 }
 
 impl App {
-    fn new(network_tx: mpsc::UnboundedSender<ToNetworkEvent>) -> App {
+    fn new(
+        rt: Arc<tokio::runtime::Runtime>,
+        network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
+    ) -> App {
         App {
             state: None,
+            rt: Some(rt),
             network_tx: Some(network_tx),
         }
     }
@@ -277,7 +290,10 @@ impl ApplicationHandler<FromNetworkEvent> for App {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
-        let state = pollster::block_on(State::new(window.clone(), self.network_tx.take().unwrap()));
+        let rt = self.rt.take().unwrap();
+        let network_tx = self.network_tx.take().unwrap();
+
+        let state = rt.block_on(State::new(window.clone(), rt.clone(), network_tx));
         self.state = Some(state);
 
         window.set_cursor_visible(false);
@@ -383,7 +399,6 @@ impl ApplicationHandler<FromNetworkEvent> for App {
     }
 }
 
-#[tokio::main]
 async fn spawn_client(tx: FromNetworkEventProxy, rx: mpsc::UnboundedReceiver<ToNetworkEvent>) {
     let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
     println!("Connecting to Luanti server at {}...", addr);
@@ -404,13 +419,25 @@ fn main() {
         .unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
+    // Create the Tokio runtime for the network thread.
+    let rt = Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap(),
+    );
+
+    // This will allow us to run stuff on the runtime from the main thread, even
+    // though the main thread is not run by the runtime.
+    let rt_clone = rt.clone();
+
     let network_tx = event_loop.create_proxy();
     let (client_tx, network_rx) = mpsc::unbounded_channel();
 
     std::thread::spawn(move || {
-        spawn_client(network_tx, network_rx);
+        rt.block_on(spawn_client(network_tx, network_rx));
     });
 
-    let mut app = App::new(client_tx);
+    let mut app = App::new(rt_clone, client_tx);
     event_loop.run_app(&mut app).unwrap();
 }
