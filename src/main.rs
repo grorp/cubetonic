@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use glam::I16Vec3;
@@ -41,7 +41,7 @@ struct State {
     last_frame: Instant,
     last_send: Instant,
 
-    mesh_chunks: HashMap<I16Vec3, voxels::MeshChunk>,
+    mesh_chunks: Arc<Mutex<HashMap<I16Vec3, voxels::MeshChunk>>>,
 
     rt: Arc<tokio::runtime::Runtime>,
     network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
@@ -154,7 +154,7 @@ impl State {
             last_frame: Instant::now(),
             last_send: Instant::now(),
 
-            mesh_chunks: HashMap::new(),
+            mesh_chunks: Arc::new(Mutex::new(HashMap::new())),
 
             rt,
             network_tx,
@@ -249,7 +249,8 @@ impl State {
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
-        for (_, chunk) in &self.mesh_chunks {
+        let chunks = self.mesh_chunks.lock().unwrap();
+        for (_, chunk) in chunks.iter() {
             pass.set_index_buffer(chunk.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_vertex_buffer(0, chunk.vertex_buffer.slice(..));
             pass.draw_indexed(0..(chunk.mesh.indices.len() as u32), 0, 0..1);
@@ -371,29 +372,35 @@ impl ApplicationHandler<FromNetworkEvent> for App {
 
         match event {
             FromNetworkEvent::Blockdata { pos, data } => {
-                let mut my_data = [[[true; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
-                let mut index: usize = 0;
+                let device = state.device.clone();
+                let chunks = state.mesh_chunks.clone();
 
-                for z in 0..CHUNK_SIZE {
-                    for y in 0..CHUNK_SIZE {
-                        for x in 0..CHUNK_SIZE {
-                            let node = data[luanti_core::MapNodeIndex::from(index)];
-                            my_data[z][y][x] = node.content_id != luanti_core::ContentId::AIR;
-                            index += 1;
+                state.rt.spawn_blocking(move || {
+                    let mut my_data = [[[true; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
+                    let mut index: usize = 0;
+
+                    for z in 0..CHUNK_SIZE {
+                        for y in 0..CHUNK_SIZE {
+                            for x in 0..CHUNK_SIZE {
+                                let node = data[luanti_core::MapNodeIndex::from(index)];
+                                my_data[z][y][x] = node.content_id != luanti_core::ContentId::AIR;
+                                index += 1;
+                            }
                         }
                     }
-                }
 
-                let mesh_chunk =
-                    voxels::MeshChunk::new(&state.device, voxels::Chunk { pos, data: my_data });
+                    let mesh_chunk =
+                        voxels::MeshChunk::new(&device, voxels::Chunk { pos, data: my_data });
 
-                if let Some(mesh_chunk) = mesh_chunk {
-                    // also replaces if necessary
-                    state.mesh_chunks.insert(pos, mesh_chunk);
-                } else {
-                    // no-op if non-existent
-                    state.mesh_chunks.remove(&pos);
-                }
+                    let mut chunks = chunks.lock().unwrap();
+                    if let Some(mesh_chunk) = mesh_chunk {
+                        // also replaces if necessary
+                        chunks.insert(pos, mesh_chunk);
+                    } else {
+                        // no-op if non-existent
+                        chunks.remove(&pos);
+                    }
+                });
             }
         }
     }

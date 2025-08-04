@@ -84,11 +84,11 @@ impl LuantiClientRunner {
         })))?;
 
         loop {
-            println!("Waiting for command...");
+            // println!("Waiting for command...");
 
             tokio::select! {
                 command = self.client.recv() => {
-                    println!("Received command from server: {:?}", command);
+                    // println!("Received command from server: {:?}", command);
                     let command = command?;
                     self.process_network_command(command)?;
                 },
