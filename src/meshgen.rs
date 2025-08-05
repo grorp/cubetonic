@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Instant};
 
 use glam::{I16Vec3, Vec3};
-use luanti_core::{ContentId, MapBlockPos, MapNode, MapNodePos};
+use luanti_core::{MapBlockPos, MapNode, MapNodePos};
 use wgpu::util::DeviceExt;
 
-use crate::map::{MeshgenMapData, NEIGHBOR_DIRS};
+use crate::map::{IsSolid, MeshgenMapData, NEIGHBOR_DIRS};
 
 /// The representation of a vertex, used by the CPU-side mesh representation,
 /// and byte-serializable for uploading to GPU buffers.
@@ -40,8 +40,10 @@ pub struct Mesh {
 pub struct MapblockMesh {
     pub blockpos: MapBlockPos,
     pub num_indices: u32,
-    pub index_buffer: wgpu::Buffer,
-    pub vertex_buffer: wgpu::Buffer,
+    /// None if num_indices == 0
+    pub index_buffer: Option<wgpu::Buffer>,
+    /// None if num_indices == 0
+    pub vertex_buffer: Option<wgpu::Buffer>,
     pub timestamp_task_spawned: Instant,
 }
 
@@ -62,6 +64,7 @@ impl MeshgenTask {
         result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
     ) {
         println!("Spawning meshgen task for {}", data.get_blockpos().vec());
+
         let t = Instant::now();
         tokio::task::spawn_blocking(move || {
             MeshgenTask {
@@ -109,8 +112,8 @@ impl MeshgenTask {
             .send(MapblockMesh {
                 blockpos: self.data.get_blockpos(),
                 num_indices: mesh.indices.len() as u32,
-                index_buffer,
-                vertex_buffer,
+                index_buffer: Some(index_buffer),
+                vertex_buffer: Some(vertex_buffer),
                 timestamp_task_spawned: self.timestamp_task_spawned,
             })
             .unwrap();
@@ -158,14 +161,9 @@ const CUBE_VERTICES: &[Vertex] = &[
 const QUAD_INDICES: &[u32] = &[0, 1, 2, 2, 3, 0];
 
 impl MeshgenTask {
-    /// Determines if a node is rendered or not (for now ;).
-    fn is_solid(node: MapNode) -> bool {
-        node.content_id != ContentId::IGNORE && node.content_id != ContentId::AIR
-    }
-
     /// Generates the mesh for a single node within the mapblock.
     fn generate_single(&self, mesh: &mut Mesh, pos: I16Vec3, node: MapNode) {
-        if !Self::is_solid(node) {
+        if !node.is_solid() {
             return;
         }
 
@@ -176,7 +174,7 @@ impl MeshgenTask {
             // node is solid or not. The mesh will be re-generated once the neighboring
             // mapblock arrives.
             if let Some(n_node) = self.data.get_node(MapNodePos(n_pos))
-                && !Self::is_solid(n_node)
+                && !n_node.is_solid()
             {
                 let index_offset = mesh.vertices.len() as u32;
                 let vertex_offset =

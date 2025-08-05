@@ -254,14 +254,24 @@ impl State {
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
+        let mut num = 0;
+        let mut num_empty = 0;
+
         for (_, mesh) in self.mapblock_meshes.iter() {
             if mesh.num_indices == 0 {
+                num_empty += 1;
                 continue;
             }
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(
+                mesh.index_buffer.as_ref().unwrap().slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
             pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+            num += 1;
         }
+
+        println!("Meshes: {} + {} empty", num, num_empty);
 
         drop(pass);
 

@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::anyhow;
 use glam::Vec3;
@@ -14,7 +15,7 @@ use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
 use tokio::sync::mpsc;
 
-use crate::map::{LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
 use crate::meshgen::{MapblockMesh, MeshgenTask};
 
 // Luanti's "BS" factor
@@ -97,20 +98,40 @@ impl LuantiClientRunner {
         }
     }
 
-    fn generate_mapblock_with_neighbors(&self, blockpos: MapBlockPos) {
-        let data = MeshgenMapData::new(&self.map, blockpos)
-            // We just inserted the block, it definitely exists.
-            .unwrap();
-        MeshgenTask::spawn(self.device.clone(), data, self.meshgen_tx.clone());
+    fn generate_mapblock(&self, blockpos: MapBlockPos) {
+        let Some(block) = self.map.get_block(&blockpos) else {
+            return;
+        };
+        let mut empty = true;
+        for node in &block.0 {
+            if node.is_solid() {
+                empty = false;
+            }
+        }
 
+        if empty {
+            println!("Skipped spawning meshgen task for empty {}", blockpos.vec());
+            self.meshgen_tx
+                .send(MapblockMesh {
+                    blockpos: blockpos,
+                    num_indices: 0,
+                    index_buffer: None,
+                    vertex_buffer: None,
+                    timestamp_task_spawned: Instant::now(),
+                })
+                .unwrap();
+        } else {
+            let data = MeshgenMapData::new(&self.map, blockpos, block);
+            MeshgenTask::spawn(self.device.clone(), data, self.meshgen_tx.clone());
+        }
+    }
+
+    fn generate_mapblock_with_neighbors(&self, blockpos: MapBlockPos) {
+        self.generate_mapblock(blockpos);
         for dir in NEIGHBOR_DIRS {
-            let Some(n_blockpos) = blockpos.checked_add(dir) else {
-                continue;
-            };
-            let Some(n_data) = MeshgenMapData::new(&self.map, n_blockpos) else {
-                continue;
-            };
-            MeshgenTask::spawn(self.device.clone(), n_data, self.meshgen_tx.clone());
+            if let Some(n_blockpos) = blockpos.checked_add(dir) {
+                self.generate_mapblock(n_blockpos);
+            }
         }
     }
 
