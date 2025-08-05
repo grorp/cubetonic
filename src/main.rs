@@ -406,18 +406,6 @@ impl ApplicationHandler<FromNetworkEvent> for App {
     }
 }
 
-async fn spawn_client(tx: FromNetworkEventProxy, rx: mpsc::UnboundedReceiver<ToNetworkEvent>) {
-    let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
-    println!("Connecting to Luanti server at {}...", addr);
-    let luanti_client = LuantiClient::connect(addr).await.unwrap();
-
-    LuantiClientRunner::spawn(luanti_client, tx, rx);
-
-    loop {
-        tokio::time::sleep(Duration::from_secs(3600)).await;
-    }
-}
-
 fn main() {
     env_logger::init();
 
@@ -434,17 +422,11 @@ fn main() {
             .unwrap(),
     );
 
-    // This will allow us to run stuff on the runtime from the main thread, even
-    // though the main thread is not run by the runtime.
-    let rt_clone = rt.clone();
-
     let network_tx = event_loop.create_proxy();
     let (client_tx, network_rx) = mpsc::unbounded_channel();
 
-    std::thread::spawn(move || {
-        rt.block_on(spawn_client(network_tx, network_rx));
-    });
+    rt.block_on(LuantiClientRunner::spawn(network_tx, network_rx));
 
-    let mut app = App::new(rt_clone, client_tx);
+    let mut app = App::new(rt, client_tx);
     event_loop.run_app(&mut app).unwrap();
 }

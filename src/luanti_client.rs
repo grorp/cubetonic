@@ -1,5 +1,6 @@
 use std::f32::consts::PI;
 use std::fmt::Debug;
+use std::net::SocketAddr;
 
 use anyhow::anyhow;
 use glam::{I16Vec3, Vec3};
@@ -47,14 +48,15 @@ pub struct LuantiClientRunner {
 }
 
 impl LuantiClientRunner {
-    pub fn spawn(
-        client: LuantiClient,
-        tx: FromNetworkEventProxy,
-        rx: mpsc::UnboundedReceiver<ToNetworkEvent>,
-    ) {
-        let _ = tx;
-        let mut runner = LuantiClientRunner { client, tx, rx };
-        tokio::spawn(async move { runner.run().await });
+    pub async fn spawn(tx: FromNetworkEventProxy, rx: mpsc::UnboundedReceiver<ToNetworkEvent>) {
+        tokio::spawn(async move {
+            let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+            println!("Connecting to Luanti server at {}...", addr);
+            let client = LuantiClient::connect(addr).await.unwrap();
+
+            let mut runner = LuantiClientRunner { client, tx, rx };
+            runner.run().await
+        });
     }
 
     async fn run(&mut self) {
