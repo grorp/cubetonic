@@ -71,13 +71,11 @@ impl MeshgenMapData {
         };
 
         for (index, dir) in NEIGHBOR_DIRS.into_iter().enumerate() {
-            let Some(n_blockpos) = blockpos.checked_add(dir) else {
-                continue;
-            };
-            let Some(n_block) = map.get_block(&n_blockpos) else {
-                continue;
-            };
-            result.neighbors[index] = Some(n_block.clone());
+            if let Some(n_blockpos) = blockpos.checked_add(dir)
+                && let Some(n_block) = map.get_block(&n_blockpos)
+            {
+                result.neighbors[index] = Some(n_block.clone());
+            }
         }
 
         result
