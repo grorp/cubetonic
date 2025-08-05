@@ -21,6 +21,7 @@ mod camera_controller;
 mod luanti_client;
 mod texture;
 mod voxels;
+mod map;
 
 struct State {
     window: Arc<Window>,

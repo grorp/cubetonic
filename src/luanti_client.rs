@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use anyhow::anyhow;
 use glam::{I16Vec3, Vec3};
-use luanti_core::MapBlockNodes;
+use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
     ClientReadySpec, FirstSrpSpec, GotBlocksSpec, Init2Spec, InitSpec, PlayerPosCommand,
@@ -13,6 +13,8 @@ use luanti_protocol::commands::client_to_server::{
 use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
 use tokio::sync::mpsc;
+
+use crate::map::LuantiMap;
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
@@ -45,6 +47,8 @@ pub struct LuantiClientRunner {
     client: LuantiClient,
     tx: FromNetworkEventProxy,
     rx: mpsc::UnboundedReceiver<ToNetworkEvent>,
+
+    map: LuantiMap,
 }
 
 impl LuantiClientRunner {
@@ -54,7 +58,13 @@ impl LuantiClientRunner {
             println!("Connecting to Luanti server at {}...", addr);
             let client = LuantiClient::connect(addr).await.unwrap();
 
-            let mut runner = LuantiClientRunner { client, tx, rx };
+            let mut runner = LuantiClientRunner {
+                client,
+                tx,
+                rx,
+
+                map: LuantiMap::new(),
+            };
             runner.run().await
         });
     }
@@ -153,7 +163,28 @@ impl LuantiClientRunner {
                     pos: spec.pos,
                     data: MapBlockNodes(spec.block.nodes.nodes),
                 })?;
+
+                self.map.insert_block(
+                    MapBlockPos::new(spec.pos).unwrap(),
+                    MapBlockNodes(spec.block.nodes.nodes),
+                );
             }
+
+            ToClientCommand::Addnode(spec) => {
+                self.map.set_node(&MapNodePos(spec.pos), spec.node);
+            }
+
+            ToClientCommand::Removenode(spec) => {
+                self.map.set_node(
+                    &MapNodePos(spec.pos),
+                    MapNode {
+                        content_id: ContentId::AIR,
+                        param1: 0,
+                        param2: 0,
+                    },
+                );
+            }
+
             _ => (),
         }
 
