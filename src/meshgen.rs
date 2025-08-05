@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Instant};
 
 use glam::{I16Vec3, Vec3};
-use luanti_core::{MapBlockPos, MapNode, MapNodePos};
+use luanti_core::{MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use wgpu::util::DeviceExt;
 
-use crate::map::{IsSolid, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
 
 /// The representation of a vertex, used by the CPU-side mesh representation,
 /// and byte-serializable for uploading to GPU buffers.
@@ -50,8 +50,8 @@ pub struct MapblockMesh {
 /// Generates mapblock meshes and uploads them to the GPU.
 pub struct MeshgenTask {
     device: Arc<wgpu::Device>,
-    data: MeshgenMapData,
     result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
+    data: MeshgenMapData,
     timestamp_task_spawned: Instant,
 }
 
@@ -60,21 +60,49 @@ impl MeshgenTask {
     /// The finished MapblockMesh is returned using the provided UnboundedSender.
     pub fn spawn(
         device: Arc<wgpu::Device>,
-        data: MeshgenMapData,
         result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
+        map: &LuantiMap,
+        blockpos: MapBlockPos,
+        block: &MapBlockNodes,
     ) {
-        println!("Spawning meshgen task for {}", data.get_blockpos().vec());
-
         let t = Instant::now();
-        tokio::task::spawn_blocking(move || {
-            MeshgenTask {
-                device,
-                data,
-                result_sender,
-                timestamp_task_spawned: t,
+
+        let mut empty = true;
+        for node in &block.0 {
+            if node.is_solid() {
+                empty = false;
             }
-            .generate();
-        });
+        }
+
+        // If the mapblock is empty, we can skip cloning 7 mapblocks and spawning
+        // the task.
+        if empty {
+            println!("Skipped spawning meshgen task for empty {}", blockpos.vec());
+
+            result_sender
+                .send(MapblockMesh {
+                    blockpos: blockpos,
+                    num_indices: 0,
+                    index_buffer: None,
+                    vertex_buffer: None,
+                    timestamp_task_spawned: t,
+                })
+                .unwrap();
+        } else {
+            println!("Spawning meshgen task for {}", blockpos.vec());
+
+            let data = MeshgenMapData::new(map, blockpos, block);
+
+            tokio::task::spawn_blocking(move || {
+                MeshgenTask {
+                    device,
+                    result_sender,
+                    data,
+                    timestamp_task_spawned: t,
+                }
+                .generate();
+            });
+        }
     }
 
     /// Generates the mapblock mesh and uploads it to GPU buffers.

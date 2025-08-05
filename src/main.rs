@@ -254,8 +254,8 @@ impl State {
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
-        let mut num = 0;
-        let mut num_empty = 0;
+        let mut num: u32 = 0;
+        let mut num_empty: u32 = 0;
 
         for (_, mesh) in self.mapblock_meshes.iter() {
             if mesh.num_indices == 0 {

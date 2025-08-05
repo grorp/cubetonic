@@ -1,7 +1,6 @@
 use std::f32::consts::PI;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::anyhow;
 use glam::Vec3;
@@ -15,7 +14,7 @@ use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
 use tokio::sync::mpsc;
 
-use crate::map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::map::{LuantiMap, NEIGHBOR_DIRS};
 use crate::meshgen::{MapblockMesh, MeshgenTask};
 
 // Luanti's "BS" factor
@@ -98,39 +97,24 @@ impl LuantiClientRunner {
         }
     }
 
-    fn generate_mapblock(&self, blockpos: MapBlockPos) {
-        let Some(block) = self.map.get_block(&blockpos) else {
-            return;
-        };
-        let mut empty = true;
-        for node in &block.0 {
-            if node.is_solid() {
-                empty = false;
-            }
-        }
-
-        if empty {
-            println!("Skipped spawning meshgen task for empty {}", blockpos.vec());
-            self.meshgen_tx
-                .send(MapblockMesh {
-                    blockpos: blockpos,
-                    num_indices: 0,
-                    index_buffer: None,
-                    vertex_buffer: None,
-                    timestamp_task_spawned: Instant::now(),
-                })
-                .unwrap();
-        } else {
-            let data = MeshgenMapData::new(&self.map, blockpos, block);
-            MeshgenTask::spawn(self.device.clone(), data, self.meshgen_tx.clone());
-        }
+    fn generate_mapblock(&self, blockpos: MapBlockPos, block: &MapBlockNodes) {
+        MeshgenTask::spawn(
+            self.device.clone(),
+            self.meshgen_tx.clone(),
+            &self.map,
+            blockpos,
+            block,
+        );
     }
 
     fn generate_mapblock_with_neighbors(&self, blockpos: MapBlockPos) {
-        self.generate_mapblock(blockpos);
+        self.generate_mapblock(blockpos, self.map.get_block(&blockpos).unwrap());
+
         for dir in NEIGHBOR_DIRS {
-            if let Some(n_blockpos) = blockpos.checked_add(dir) {
-                self.generate_mapblock(n_blockpos);
+            if let Some(n_blockpos) = blockpos.checked_add(dir)
+                && let Some(n_block) = self.map.get_block(&n_blockpos)
+            {
+                self.generate_mapblock(n_blockpos, n_block);
             }
         }
     }
@@ -181,8 +165,8 @@ impl LuantiClientRunner {
                     })))?;
 
                 let blockpos = MapBlockPos::new(spec.pos).unwrap();
-                self.map
-                    .insert_block(blockpos, MapBlockNodes(spec.block.nodes.nodes));
+                let block = MapBlockNodes(spec.block.nodes.nodes);
+                self.map.insert_block(blockpos, block);
                 self.generate_mapblock_with_neighbors(blockpos);
             }
 
