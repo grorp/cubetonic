@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 use std::fmt::Debug;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use glam::{I16Vec3, Vec3};
@@ -14,30 +15,15 @@ use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
 use tokio::sync::mpsc;
 
-use crate::map::LuantiMap;
+use crate::map::{LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::meshgen::{MapblockMesh, MeshgenTask};
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
 
 pub type FromNetworkEventProxy = winit::event_loop::EventLoopProxy<FromNetworkEvent>;
 
-pub enum FromNetworkEvent {
-    Blockdata { pos: I16Vec3, data: MapBlockNodes },
-}
-
-// TODO: MapBlockNodes doesn't implement Debug, so #[derive(Debug)] on LuantiClientEvent
-// is not possible, but we need Debug implemented for Result ? or .unwrap to work
-impl Debug for FromNetworkEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Blockdata { pos, data: _ } => f
-                .debug_struct("Blockdata")
-                .field("pos", pos)
-                .field("data", &"...")
-                .finish(),
-        }
-    }
-}
+pub enum FromNetworkEvent {}
 
 pub enum ToNetworkEvent {
     PlayerPos { pos: Vec3, yaw: f32, pitch: f32 },
@@ -48,22 +34,33 @@ pub struct LuantiClientRunner {
     tx: FromNetworkEventProxy,
     rx: mpsc::UnboundedReceiver<ToNetworkEvent>,
 
+    device: Arc<wgpu::Device>,
     map: LuantiMap,
+    meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
 }
 
 impl LuantiClientRunner {
-    pub async fn spawn(tx: FromNetworkEventProxy, rx: mpsc::UnboundedReceiver<ToNetworkEvent>) {
+    pub async fn spawn(
+        device: Arc<wgpu::Device>,
+        tx: FromNetworkEventProxy,
+        rx: mpsc::UnboundedReceiver<ToNetworkEvent>,
+        meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
+    ) {
         tokio::spawn(async move {
             let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
             println!("Connecting to Luanti server at {}...", addr);
             let client = LuantiClient::connect(addr).await.unwrap();
+
+            let map = LuantiMap::new();
 
             let mut runner = LuantiClientRunner {
                 client,
                 tx,
                 rx,
 
-                map: LuantiMap::new(),
+                device,
+                map,
+                meshgen_tx,
             };
             runner.run().await
         });
@@ -113,6 +110,23 @@ impl LuantiClientRunner {
         }
     }
 
+    fn generate_mapblock_with_neighbors(&self, blockpos: MapBlockPos) {
+        let data = MeshgenMapData::new(&self.map, blockpos)
+            // We just inserted the block, it definitely exists.
+            .unwrap();
+        MeshgenTask::spawn(self.device.clone(), data, self.meshgen_tx.clone());
+
+        for dir in NEIGHBOR_DIRS {
+            let Some(n_blockpos) = blockpos.checked_add(dir) else {
+                continue;
+            };
+            let Some(n_data) = MeshgenMapData::new(&self.map, n_blockpos) else {
+                continue;
+            };
+            MeshgenTask::spawn(self.device.clone(), n_data, self.meshgen_tx.clone());
+        }
+    }
+
     fn process_network_command(&mut self, command: ToClientCommand) -> anyhow::Result<()> {
         match command {
             // TODO: check connection/auth state first
@@ -159,30 +173,30 @@ impl LuantiClientRunner {
                         blocks: vec![spec.pos],
                     })))?;
 
-                self.tx.send_event(FromNetworkEvent::Blockdata {
-                    pos: spec.pos,
-                    data: MapBlockNodes(spec.block.nodes.nodes),
-                })?;
+                let blockpos = MapBlockPos::new(spec.pos).unwrap();
 
-                self.map.insert_block(
-                    MapBlockPos::new(spec.pos).unwrap(),
-                    MapBlockNodes(spec.block.nodes.nodes),
-                );
+                self.map
+                    .insert_block(blockpos, MapBlockNodes(spec.block.nodes.nodes));
+                self.generate_mapblock_with_neighbors(blockpos);
             }
 
             ToClientCommand::Addnode(spec) => {
-                self.map.set_node(&MapNodePos(spec.pos), spec.node);
+                if let Some(blockpos) = self.map.set_node(&MapNodePos(spec.pos), spec.node) {
+                    self.generate_mapblock_with_neighbors(blockpos);
+                }
             }
 
             ToClientCommand::Removenode(spec) => {
-                self.map.set_node(
+                if let Some(blockpos) = self.map.set_node(
                     &MapNodePos(spec.pos),
                     MapNode {
                         content_id: ContentId::AIR,
                         param1: 0,
                         param2: 0,
                     },
-                );
+                ) {
+                    self.generate_mapblock_with_neighbors(blockpos);
+                }
             }
 
             _ => (),

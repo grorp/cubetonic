@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use glam::I16Vec3;
 use luanti_core::{MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 
+/// A Luanti map. Consists of "mapblocks", which are 16³ chunks of "nodes".
 pub struct LuantiMap {
     blocks: HashMap<MapBlockPos, MapBlockNodes>,
 }
@@ -16,27 +17,33 @@ impl LuantiMap {
     }
 
     /// Inserts a mapblock into the map.
+    /// Replaces the mapblock if it already exists.
     pub fn insert_block(&mut self, blockpos: MapBlockPos, data: MapBlockNodes) {
         self.blocks.insert(blockpos, data);
     }
 
     /// Gets a mapblock from the map.
+    /// Returns None if the mapblock doesn't exist.
     pub fn get_block(&self, blockpos: &MapBlockPos) -> Option<&MapBlockNodes> {
         self.blocks.get(blockpos)
     }
 
     /// Sets a node in the map.
-    /// No-op if the mapblock that would contain the node does not exist.
-    pub fn set_node(&mut self, pos: &MapNodePos, node: MapNode) {
+    /// Returns the modified mapblock's position.
+    /// Returns None and does nothing if the mapblock that would contain the
+    /// node doesn't exist.
+    pub fn set_node(&mut self, pos: &MapNodePos, node: MapNode) -> Option<MapBlockPos> {
         let (blockpos, index) = pos.split_index();
 
-        if let Some(block) = self.blocks.get_mut(&blockpos) {
-            block[index] = node;
-        }
+        let block = self.blocks.get_mut(&blockpos)?;
+        block[index] = node;
+        Some(blockpos)
     }
 }
 
-const NEIGHBOR_DIRS: [I16Vec3; 6] = [
+/// Offsets for the 6 neighbors of a mapblock or node.
+/// Order: +Y, -Y, +X, -Y, +Z, -Z
+pub const NEIGHBOR_DIRS: [I16Vec3; 6] = [
     I16Vec3::Y,
     I16Vec3::NEG_Y,
     I16Vec3::X,
@@ -48,15 +55,19 @@ const NEIGHBOR_DIRS: [I16Vec3; 6] = [
 /// Stores a clone of a mapblock and its 6 neighbors (if those exist).
 /// Used for sending map data to meshgen.
 pub struct MeshgenMapData {
+    blockpos: MapBlockPos,
     block: MapBlockNodes,
     // Order: see NEIGHBOR_DIRS
     neighbors: [Option<MapBlockNodes>; 6],
 }
 
 impl MeshgenMapData {
+    /// Creates a new MeshgenMapData, cloning the needed mapblock data.
+    /// Returns None if the main mapblock doesn't exist.
     pub fn new(map: &LuantiMap, blockpos: MapBlockPos) -> Option<Self> {
         let block = map.get_block(&blockpos)?;
         let mut result = Self {
+            blockpos,
             block: block.clone(),
             neighbors: [const { None }; 6],
         };
@@ -74,11 +85,20 @@ impl MeshgenMapData {
         Some(result)
     }
 
+    pub fn get_blockpos(&self) -> MapBlockPos {
+        self.blockpos
+    }
+
+    pub fn get_block(&self) -> &MapBlockNodes {
+        &self.block
+    }
+
     /// Returns a node from this mapblock or its neighbors.
     /// Coordinates are relative to the main mapblock.
+    /// Returns None if the mapblock that would contain the node doesn't exist
+    /// or is outside of the MeshgenMapData's region.
     pub fn get_node(&self, pos: MapNodePos) -> Option<MapNode> {
         let (blockpos, index) = pos.split_index();
-
         let vec = blockpos.vec();
 
         if vec == I16Vec3::ZERO {

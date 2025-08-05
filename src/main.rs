@@ -19,9 +19,10 @@ use voxels::CHUNK_SIZE;
 mod camera;
 mod camera_controller;
 mod luanti_client;
+mod map;
+mod meshgen;
 mod texture;
 mod voxels;
-mod map;
 
 struct State {
     window: Arc<Window>,
@@ -372,37 +373,7 @@ impl ApplicationHandler<FromNetworkEvent> for App {
         let state = self.state.as_mut().unwrap();
 
         match event {
-            FromNetworkEvent::Blockdata { pos, data } => {
-                let device = state.device.clone();
-                let chunks = state.mesh_chunks.clone();
-
-                state.rt.spawn_blocking(move || {
-                    let mut my_data = [[[true; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
-                    let mut index: usize = 0;
-
-                    for z in 0..CHUNK_SIZE {
-                        for y in 0..CHUNK_SIZE {
-                            for x in 0..CHUNK_SIZE {
-                                let node = data[luanti_core::MapNodeIndex::from(index)];
-                                my_data[z][y][x] = node.content_id != luanti_core::ContentId::AIR;
-                                index += 1;
-                            }
-                        }
-                    }
-
-                    let mesh_chunk =
-                        voxels::MeshChunk::new(&device, voxels::Chunk { pos, data: my_data });
-
-                    let mut chunks = chunks.lock().unwrap();
-                    if let Some(mesh_chunk) = mesh_chunk {
-                        // also replaces if necessary
-                        chunks.insert(pos, mesh_chunk);
-                    } else {
-                        // no-op if non-existent
-                        chunks.remove(&pos);
-                    }
-                });
-            }
+            _ => (),
         }
     }
 }
