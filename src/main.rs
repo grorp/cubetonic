@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Instant;
 
 use glam::I16Vec3;
-use luanti_protocol::LuantiClient;
 use tokio::sync::mpsc;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
@@ -12,9 +10,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
-use luanti_client::{FromNetworkEvent, FromNetworkEventProxy, LuantiClientRunner, ToNetworkEvent};
+use luanti_client::LuantiClientRunner;
 
-use voxels::CHUNK_SIZE;
+use crate::luanti_client::MainToClientEvent;
+use crate::meshgen::MapblockMesh;
 
 mod camera;
 mod camera_controller;
@@ -22,11 +21,10 @@ mod luanti_client;
 mod map;
 mod meshgen;
 mod texture;
-mod voxels;
 
 struct State {
     window: Arc<Window>,
-    device: wgpu::Device,
+    device: Arc<wgpu::Device>,
     queue: wgpu::Queue,
 
     surface: wgpu::Surface<'static>,
@@ -43,18 +41,15 @@ struct State {
     last_frame: Instant,
     last_send: Instant,
 
-    mesh_chunks: Arc<Mutex<HashMap<I16Vec3, voxels::MeshChunk>>>,
-
     rt: Arc<tokio::runtime::Runtime>,
-    network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
+    client_tx: mpsc::UnboundedSender<MainToClientEvent>,
+    meshgen_rx: mpsc::UnboundedReceiver<MapblockMesh>,
+
+    mapblock_meshes: HashMap<I16Vec3, MapblockMesh>,
 }
 
 impl State {
-    async fn new(
-        window: Arc<Window>,
-        rt: Arc<tokio::runtime::Runtime>,
-        network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
-    ) -> State {
+    async fn new(window: Arc<Window>, rt: Arc<tokio::runtime::Runtime>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -72,6 +67,7 @@ impl State {
             .request_device(&wgpu::DeviceDescriptor::default())
             .await
             .unwrap();
+        let device = Arc::new(device);
 
         let size = window.inner_size();
         let cap = surface.get_capabilities(&adapter);
@@ -103,7 +99,7 @@ impl State {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[voxels::Vertex::layout()],
+                buffers: &[meshgen::Vertex::layout()],
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -137,6 +133,10 @@ impl State {
 
         let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
 
+        let (client_tx, client_rx) = mpsc::unbounded_channel();
+        let (meshgen_tx, meshgen_rx) = mpsc::unbounded_channel();
+        LuantiClientRunner::spawn(device.clone(), client_rx, meshgen_tx).await;
+
         let state = State {
             window,
             device,
@@ -156,10 +156,11 @@ impl State {
             last_frame: Instant::now(),
             last_send: Instant::now(),
 
-            mesh_chunks: Arc::new(Mutex::new(HashMap::new())),
-
             rt,
-            network_tx,
+            client_tx,
+            meshgen_rx,
+
+            mapblock_meshes: HashMap::new(),
         };
         state.configure_surface();
         state
@@ -203,8 +204,8 @@ impl State {
 
         let send_dtime = (now - self.last_send).as_secs_f32();
         if send_dtime >= 0.1 {
-            self.network_tx
-                .send(ToNetworkEvent::PlayerPos {
+            self.client_tx
+                .send(MainToClientEvent::PlayerPos {
                     pos: self.camera.params.pos,
                     yaw: self.camera_controller.yaw,
                     pitch: self.camera_controller.pitch,
@@ -251,11 +252,13 @@ impl State {
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
-        let chunks = self.mesh_chunks.lock().unwrap();
-        for (_, chunk) in chunks.iter() {
-            pass.set_index_buffer(chunk.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(0, chunk.vertex_buffer.slice(..));
-            pass.draw_indexed(0..(chunk.mesh.indices.len() as u32), 0, 0..1);
+        for (_, mesh) in self.mapblock_meshes.iter() {
+            if mesh.num_indices == 0 {
+                continue;
+            }
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
         }
 
         drop(pass);
@@ -266,37 +269,24 @@ impl State {
     }
 }
 
+#[derive(Default)]
 struct App {
     state: Option<State>,
-
-    // temporary holder until State is created
-    rt: Option<Arc<tokio::runtime::Runtime>>,
-    // temporary holder until State is created
-    network_tx: Option<mpsc::UnboundedSender<ToNetworkEvent>>,
 }
 
-impl App {
-    fn new(
-        rt: Arc<tokio::runtime::Runtime>,
-        network_tx: mpsc::UnboundedSender<ToNetworkEvent>,
-    ) -> App {
-        App {
-            state: None,
-            rt: Some(rt),
-            network_tx: Some(network_tx),
-        }
-    }
-}
-
-impl ApplicationHandler<FromNetworkEvent> for App {
+impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
-        let rt = self.rt.take().unwrap();
-        let network_tx = self.network_tx.take().unwrap();
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap(),
+        );
 
-        let state = rt.block_on(State::new(window.clone(), rt.clone(), network_tx));
+        let state = rt.block_on(State::new(window.clone(), rt.clone()));
         self.state = Some(state);
 
         window.set_cursor_visible(false);
@@ -369,11 +359,22 @@ impl ApplicationHandler<FromNetworkEvent> for App {
         state.camera_controller.process_device_event(&event);
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: FromNetworkEvent) {
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         let state = self.state.as_mut().unwrap();
 
-        match event {
-            _ => (),
+        while let Ok(mesh) = state.meshgen_rx.try_recv() {
+            let prev_mesh = state.mapblock_meshes.get_mut(&mesh.blockpos.vec());
+
+            if let Some(prev_mesh) = prev_mesh {
+                // A meshgen task for the same mapblock might have started
+                // later, but finished earlier than this one.
+                // Don't replace the new data with our outdated data in that case.
+                if mesh.timestamp_task_spawned > prev_mesh.timestamp_task_spawned {
+                    *prev_mesh = mesh;
+                };
+            } else {
+                state.mapblock_meshes.insert(mesh.blockpos.vec(), mesh);
+            }
         }
     }
 }
@@ -381,24 +382,9 @@ impl ApplicationHandler<FromNetworkEvent> for App {
 fn main() {
     env_logger::init();
 
-    let event_loop = EventLoop::<FromNetworkEvent>::with_user_event()
-        .build()
-        .unwrap();
+    let event_loop = EventLoop::with_user_event().build().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    // Create the Tokio runtime for the network thread.
-    let rt = Arc::new(
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap(),
-    );
-
-    let network_tx = event_loop.create_proxy();
-    let (client_tx, network_rx) = mpsc::unbounded_channel();
-
-    rt.block_on(LuantiClientRunner::spawn(network_tx, network_rx));
-
-    let mut app = App::new(rt, client_tx);
+    let mut app = App::default();
     event_loop.run_app(&mut app).unwrap();
 }

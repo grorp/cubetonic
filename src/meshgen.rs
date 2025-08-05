@@ -38,10 +38,11 @@ pub struct Mesh {
 
 /// A finished mapblock mesh uploaded to the GPU, returned by a MeshgenTask.
 pub struct MapblockMesh {
-    blockpos: MapBlockPos,
-    index_buffer: wgpu::Buffer,
-    vertex_buffer: wgpu::Buffer,
-    timestamp_task_spawned: Instant,
+    pub blockpos: MapBlockPos,
+    pub num_indices: u32,
+    pub index_buffer: wgpu::Buffer,
+    pub vertex_buffer: wgpu::Buffer,
+    pub timestamp_task_spawned: Instant,
 }
 
 /// Generates mapblock meshes and uploads them to the GPU.
@@ -106,6 +107,7 @@ impl MeshgenTask {
         self.result_sender
             .send(MapblockMesh {
                 blockpos: self.data.get_blockpos(),
+                num_indices: mesh.indices.len() as u32,
                 index_buffer,
                 vertex_buffer,
                 timestamp_task_spawned: self.timestamp_task_spawned,

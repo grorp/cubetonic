@@ -1,10 +1,9 @@
 use std::f32::consts::PI;
-use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use glam::{I16Vec3, Vec3};
+use glam::Vec3;
 use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
@@ -21,29 +20,23 @@ use crate::meshgen::{MapblockMesh, MeshgenTask};
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
 
-pub type FromNetworkEventProxy = winit::event_loop::EventLoopProxy<FromNetworkEvent>;
-
-pub enum FromNetworkEvent {}
-
-pub enum ToNetworkEvent {
+pub enum MainToClientEvent {
     PlayerPos { pos: Vec3, yaw: f32, pitch: f32 },
 }
 
 pub struct LuantiClientRunner {
-    client: LuantiClient,
-    tx: FromNetworkEventProxy,
-    rx: mpsc::UnboundedReceiver<ToNetworkEvent>,
-
     device: Arc<wgpu::Device>,
-    map: LuantiMap,
+    main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
     meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
+
+    client: LuantiClient,
+    map: LuantiMap,
 }
 
 impl LuantiClientRunner {
     pub async fn spawn(
         device: Arc<wgpu::Device>,
-        tx: FromNetworkEventProxy,
-        rx: mpsc::UnboundedReceiver<ToNetworkEvent>,
+        main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
         meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
     ) {
         tokio::spawn(async move {
@@ -54,13 +47,12 @@ impl LuantiClientRunner {
             let map = LuantiMap::new();
 
             let mut runner = LuantiClientRunner {
-                client,
-                tx,
-                rx,
-
                 device,
-                map,
+                main_rx,
                 meshgen_tx,
+
+                client,
+                map,
             };
             runner.run().await
         });
@@ -68,14 +60,9 @@ impl LuantiClientRunner {
 
     async fn run(&mut self) {
         match self.run_inner().await {
-            Ok(()) => (), // unreachable
+            Ok(()) => unreachable!(),
             Err(err) => {
                 println!("Disconnected: {}", err);
-
-                /*
-                let mut data = self.data.lock().unwrap();
-                data.connected = false;
-                */
             }
         }
     }
@@ -102,9 +89,9 @@ impl LuantiClientRunner {
                     self.process_network_command(command)?;
                 },
 
-                event = self.rx.recv() => {
-                    let event = event.ok_or_else(|| anyhow!("client -> network thread channel is closed"))?;
-                    self.process_client_event(event)?;
+                event = self.main_rx.recv() => {
+                    let event = event.ok_or_else(|| anyhow!("main_rx is closed"))?;
+                    self.process_main_event(event)?;
                 },
             }
         }
@@ -137,7 +124,7 @@ impl LuantiClientRunner {
                         .send(ToServerCommand::FirstSrp(Box::new(FirstSrpSpec {
                             salt: vec![],
                             verification_key: vec![],
-                            is_empty: false, // only used for "disallow empty names"
+                            is_empty: false, // only used for "disallow empty passwords"
                         })))?;
                 } else {
                     // cannot login as that would require actually implementing srp :)
@@ -146,7 +133,7 @@ impl LuantiClientRunner {
             }
 
             // TODO: check connection/auth state first
-            ToClientCommand::AuthAccept(spec) => {
+            ToClientCommand::AuthAccept(_spec) => {
                 self.client
                     .send(ToServerCommand::Init2(Box::new(Init2Spec {
                         lang: Some(String::from("en")),
@@ -166,7 +153,6 @@ impl LuantiClientRunner {
             }
 
             ToClientCommand::Blockdata(spec) => {
-                // TODO: do I or does luanti-protocol do this?
                 // TODO: Luanti only sends this after meshgen? batching?
                 self.client
                     .send(ToServerCommand::GotBlocks(Box::new(GotBlocksSpec {
@@ -174,7 +160,6 @@ impl LuantiClientRunner {
                     })))?;
 
                 let blockpos = MapBlockPos::new(spec.pos).unwrap();
-
                 self.map
                     .insert_block(blockpos, MapBlockNodes(spec.block.nodes.nodes));
                 self.generate_mapblock_with_neighbors(blockpos);
@@ -205,9 +190,9 @@ impl LuantiClientRunner {
         Ok(())
     }
 
-    fn process_client_event(&mut self, event: ToNetworkEvent) -> anyhow::Result<()> {
+    fn process_main_event(&mut self, event: MainToClientEvent) -> anyhow::Result<()> {
         match event {
-            ToNetworkEvent::PlayerPos { pos, yaw, pitch } => {
+            MainToClientEvent::PlayerPos { pos, yaw, pitch } => {
                 self.client
                     .send(ToServerCommand::Playerpos(Box::new(PlayerPosCommand {
                         player_pos: luanti_protocol::types::PlayerPos {
