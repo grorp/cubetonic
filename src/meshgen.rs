@@ -120,6 +120,27 @@ impl MeshgenTask {
             }
         }
 
+        if mesh.indices.len() == 0 {
+            // This can still happen even though we attempt to skip empty mapblocks
+            // earlier: A mapblock may be non-empty, but not render any faces due to
+            // culling depending on its neighbors (imagine a fully solid mapblock).
+            println!(
+                "Late empty mesh detected for {}",
+                self.data.get_blockpos().vec()
+            );
+
+            self.result_sender
+                .send(MapblockMesh {
+                    blockpos: self.data.get_blockpos(),
+                    num_indices: 0,
+                    index_buffer: None,
+                    vertex_buffer: None,
+                    timestamp_task_spawned: self.timestamp_task_spawned,
+                })
+                .unwrap();
+            return;
+        }
+
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
