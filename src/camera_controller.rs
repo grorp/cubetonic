@@ -149,6 +149,6 @@ impl CameraController {
             self.pitch
         );
         */
-        println!("dtime: {:.4}", dtime);
+        // println!("dtime: {:.4}", dtime);
     }
 }

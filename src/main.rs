@@ -45,6 +45,7 @@ struct State {
     client_tx: mpsc::UnboundedSender<MainToClientEvent>,
     meshgen_rx: mpsc::UnboundedReceiver<MapblockMesh>,
 
+    remesh_counter: HashMap<I16Vec3, usize>,
     mapblock_meshes: HashMap<I16Vec3, MapblockMesh>,
 }
 
@@ -160,6 +161,7 @@ impl State {
             client_tx,
             meshgen_rx,
 
+            remesh_counter: HashMap::new(),
             mapblock_meshes: HashMap::new(),
         };
         state.configure_surface();
@@ -363,6 +365,9 @@ impl ApplicationHandler for App {
         let state = self.state.as_mut().unwrap();
 
         while let Ok(mesh) = state.meshgen_rx.try_recv() {
+            let counter = state.remesh_counter.entry(mesh.blockpos.vec()).or_insert(0);
+            *counter += 1;
+
             let prev_mesh = state.mapblock_meshes.get_mut(&mesh.blockpos.vec());
 
             if let Some(prev_mesh) = prev_mesh {
@@ -370,9 +375,25 @@ impl ApplicationHandler for App {
                 // later, but finished earlier than this one.
                 // Don't replace the new data with our outdated data in that case.
                 if mesh.timestamp_task_spawned > prev_mesh.timestamp_task_spawned {
+                    println!(
+                        "Received mapblock mesh for {} [UPDATED] [#{}]",
+                        mesh.blockpos.vec(),
+                        counter,
+                    );
                     *prev_mesh = mesh;
-                };
+                } else {
+                    println!(
+                        "Received mapblock mesh for {} [UPDATED, OBSOLETE] [#{}]",
+                        mesh.blockpos.vec(),
+                        counter,
+                    );
+                }
             } else {
+                println!(
+                    "Received mapblock mesh for {} [NEW] [#{}]",
+                    mesh.blockpos.vec(),
+                    counter
+                );
                 state.mapblock_meshes.insert(mesh.blockpos.vec(), mesh);
             }
         }

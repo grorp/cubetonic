@@ -61,6 +61,7 @@ impl MeshgenTask {
         data: MeshgenMapData,
         result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
     ) {
+        println!("Spawning meshgen task for {}", data.get_blockpos().vec());
         let t = Instant::now();
         tokio::task::spawn_blocking(move || {
             MeshgenTask {
