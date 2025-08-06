@@ -261,12 +261,12 @@ impl State {
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, self.camera.bind_group(), &[]);
 
-        let mut num: u32 = 0;
-        let mut num_empty: u32 = 0;
+        // let mut num: u32 = 0;
+        // let mut num_empty: u32 = 0;
 
         for (_, mesh) in self.mapblock_meshes.iter() {
             if mesh.num_indices == 0 {
-                num_empty += 1;
+                // num_empty += 1;
                 continue;
             }
             pass.set_index_buffer(
@@ -275,13 +275,15 @@ impl State {
             );
             pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
             pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
-            num += 1;
+            // num += 1;
         }
 
+        /*
         println!(
             "dtime: {:.4}; Meshes: {} + {} empty; total runs {}",
             dtime, num, num_empty, self.remesh_counter_total
         );
+        */
 
         drop(pass);
 
@@ -303,25 +305,31 @@ impl State {
             // later, but finished earlier than this one.
             // Don't replace the new data with our outdated data in that case.
             if mesh.timestamp_task_spawned > prev_mesh.timestamp_task_spawned {
+                /*
                 println!(
                     "Received mapblock mesh for {} [UPDATED] [#{}]",
                     mesh.blockpos.vec(),
                     counter,
                 );
+                */
                 *prev_mesh = mesh;
-            } else {
+            }
+            /* else {
                 println!(
                     "Received mapblock mesh for {} [UPDATED, OBSOLETE] [#{}]",
                     mesh.blockpos.vec(),
                     counter,
                 );
             }
+            */
         } else {
+            /*
             println!(
                 "Received mapblock mesh for {} [NEW] [#{}]",
                 mesh.blockpos.vec(),
                 counter
             );
+            */
             self.mapblock_meshes.insert(mesh.blockpos.vec(), mesh);
         }
     }

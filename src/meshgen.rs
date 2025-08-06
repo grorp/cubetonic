@@ -78,7 +78,7 @@ impl MeshgenTask {
         // If the mapblock is empty, we can skip cloning 7 mapblocks and spawning
         // the task.
         if empty {
-            println!("Skipped spawning meshgen task for empty {}", blockpos.vec());
+            // println!("Skipped spawning meshgen task for empty {}", blockpos.vec());
 
             main_tx
                 .send(ClientToMainEvent::MapblockMesh(MapblockMesh {
@@ -90,7 +90,7 @@ impl MeshgenTask {
                 }))
                 .unwrap();
         } else {
-            println!("Spawning meshgen task for {}", blockpos.vec());
+            // println!("Spawning meshgen task for {}", blockpos.vec());
 
             let data = MeshgenMapData::new(map, blockpos, block);
 
@@ -125,10 +125,12 @@ impl MeshgenTask {
             // This can still happen even though we attempt to skip empty mapblocks
             // earlier: A mapblock may be non-empty, but not render any faces due to
             // culling depending on its neighbors (imagine a fully solid mapblock).
+            /*
             println!(
                 "Late empty mesh detected for {}",
                 self.data.get_blockpos().vec()
             );
+            */
 
             self.main_tx
                 .send(ClientToMainEvent::MapblockMesh(MapblockMesh {
