@@ -271,7 +271,7 @@ impl State {
             num += 1;
         }
 
-        println!("Meshes: {} + {} empty", num, num_empty);
+        println!("dtime: {:.4}; Meshes: {} + {} empty", dtime, num, num_empty);
 
         drop(pass);
 
