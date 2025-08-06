@@ -15,6 +15,7 @@ use luanti_protocol::commands::client_to_server::{
     ToServerCommand,
 };
 use luanti_protocol::commands::server_to_client::ToClientCommand;
+use luanti_protocol::types::ContentFeatures;
 use rand::Rng;
 use tokio::sync::mpsc;
 
@@ -52,6 +53,7 @@ pub struct LuantiClientRunner {
     map: LuantiMap,
     meshgen_pool: rayon::ThreadPool,
 
+    node_def: HashMap<ContentId, ContentFeatures>,
     media_paths: HashMap<String, PathBuf>,
 }
 
@@ -84,6 +86,7 @@ impl LuantiClientRunner {
                 map,
                 meshgen_pool,
 
+                node_def: HashMap::new(),
                 media_paths: HashMap::new(),
             };
             runner.run().await
@@ -188,8 +191,22 @@ impl LuantiClientRunner {
                 self.state = ClientState::Init2Sent;
             }
 
+            // TODO: check state properly
+            ToClientCommand::Nodedef(spec) => 'b: {
+                if self.state != ClientState::Init2Sent || !self.node_def.is_empty() {
+                    println!("Received Nodedef, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
+                for (id, def) in spec.node_def.content_features {
+                    self.node_def.insert(ContentId(id), def);
+                }
+                println!("Received {} node definitions", self.node_def.len());
+            }
+
+            // TODO: check state properly
             ToClientCommand::AnnounceMedia(spec) => 'b: {
-                if self.state != ClientState::Init2Sent {
+                if self.state != ClientState::Init2Sent || !self.media_paths.is_empty() {
                     println!("Received AnnounceMedia, invalid for state {:?}", self.state);
                     break 'b;
                 }
@@ -223,7 +240,8 @@ impl LuantiClientRunner {
 
                 println!("Found {} media files in cache", self.media_paths.len());
 
-                // TODO: wait for item definitions etc. first
+                // TODO: update state properly
+                assert!(!self.node_def.is_empty());
                 self.client
                     .send(ToServerCommand::ClientReady(Box::new(ClientReadySpec {
                         major_ver: 0,
@@ -304,7 +322,7 @@ impl LuantiClientRunner {
 
     fn process_main_event(&mut self, event: MainToClientEvent) -> anyhow::Result<()> {
         match event {
-            MainToClientEvent::PlayerPos (pos) => {
+            MainToClientEvent::PlayerPos(pos) => {
                 self.client
                     .send(ToServerCommand::Playerpos(Box::new(PlayerPosCommand {
                         player_pos: luanti_protocol::types::PlayerPos {
