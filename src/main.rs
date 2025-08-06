@@ -41,7 +41,6 @@ struct State {
     last_frame: Instant,
     last_send: Instant,
 
-    rt: Arc<tokio::runtime::Runtime>,
     client_tx: mpsc::UnboundedSender<MainToClientEvent>,
     meshgen_rx: mpsc::UnboundedReceiver<MapblockMesh>,
 
@@ -50,7 +49,7 @@ struct State {
 }
 
 impl State {
-    async fn new(window: Arc<Window>, rt: Arc<tokio::runtime::Runtime>) -> State {
+    async fn new(window: Arc<Window>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
         let surface = instance.create_surface(window.clone()).unwrap();
@@ -157,7 +156,6 @@ impl State {
             last_frame: Instant::now(),
             last_send: Instant::now(),
 
-            rt,
             client_tx,
             meshgen_rx,
 
@@ -281,9 +279,20 @@ impl State {
     }
 }
 
-#[derive(Default)]
 struct App {
+    rt: tokio::runtime::Runtime,
     state: Option<State>,
+}
+
+impl App {
+    fn new() -> Self {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        App { rt, state: None }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -291,14 +300,7 @@ impl ApplicationHandler for App {
         let attr = Window::default_attributes().with_title("Cubetonic");
         let window = Arc::new(event_loop.create_window(attr).unwrap());
 
-        let rt = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
-        );
-
-        let state = rt.block_on(State::new(window.clone(), rt.clone()));
+        let state = self.rt.block_on(State::new(window.clone()));
         self.state = Some(state);
 
         window.set_cursor_visible(false);
@@ -416,6 +418,6 @@ fn main() {
     let event_loop = EventLoop::with_user_event().build().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App::default();
+    let mut app = App::new();
     event_loop.run_app(&mut app).unwrap();
 }
