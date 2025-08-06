@@ -4,6 +4,12 @@ struct CameraUniform {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
+@group(1) @binding(0)
+var textures: binding_array<texture_2d<f32>>;
+
+@group(1) @binding(1)
+var samplers: binding_array<sampler>;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -41,7 +47,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(material_color * light, 1.0);
     */
 
-    var color: vec3<f32> = vec3<f32>(0.95, 0.95, 1.0);
+    var color: vec3<f32> = textureSample(textures[201], samplers[201], in.position.xz).rgb;
 
     if (abs(in.normal.x) > 0.001) {
         // +x or -x

@@ -14,7 +14,7 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 use luanti_client::LuantiClientRunner;
 
 use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
-use crate::meshgen::MapblockMesh;
+use crate::meshgen::{MapblockMesh, MapblockTextureData};
 
 mod camera;
 mod camera_controller;
@@ -32,7 +32,6 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
     surface_format: wgpu::TextureFormat,
 
-    render_pipeline: wgpu::RenderPipeline,
     depth_texture: wgpu::Texture,
     depth_texture_view: wgpu::TextureView,
 
@@ -44,6 +43,9 @@ struct State {
 
     client_tx: mpsc::UnboundedSender<MainToClientEvent>,
     client_rx: mpsc::UnboundedReceiver<ClientToMainEvent>,
+
+    mapblock_texture_data: Option<MapblockTextureData>,
+    render_pipeline: Option<wgpu::RenderPipeline>,
 
     remesh_counter_total: u32,
     remesh_counter: HashMap<I16Vec3, u32>,
@@ -120,54 +122,6 @@ impl State {
         );
         let camera_controller = camera_controller::CameraController::new();
 
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&camera.bind_group_layout()],
-                push_constant_ranges: &[],
-            });
-
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[meshgen::Vertex::layout()],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                // Irrlicht's fault
-                front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                ..wgpu::PrimitiveState::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: texture::DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview: None,
-            cache: None,
-        });
-
         let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
 
         let (client_tx, main_rx) = mpsc::unbounded_channel();
@@ -183,7 +137,6 @@ impl State {
             size,
             surface_format,
 
-            render_pipeline,
             depth_texture,
             depth_texture_view,
 
@@ -195,6 +148,9 @@ impl State {
 
             client_tx,
             client_rx,
+
+            mapblock_texture_data: None,
+            render_pipeline: None,
 
             remesh_counter_total: 0,
             remesh_counter: HashMap::new(),
@@ -292,32 +248,38 @@ impl State {
             ..wgpu::RenderPassDescriptor::default()
         });
 
-        pass.set_pipeline(&self.render_pipeline);
-        pass.set_bind_group(0, self.camera.bind_group(), &[]);
+        if self.render_pipeline.is_some() {
+            let render_pipeline = self.render_pipeline.as_ref().unwrap();
+            let mapblock_texture_data = self.mapblock_texture_data.as_ref().unwrap();
 
-        // let mut num: u32 = 0;
-        // let mut num_empty: u32 = 0;
+            pass.set_pipeline(render_pipeline);
+            pass.set_bind_group(0, self.camera.bind_group(), &[]);
+            pass.set_bind_group(1, &mapblock_texture_data.bind_group, &[]);
 
-        for (_, mesh) in self.mapblock_meshes.iter() {
-            if mesh.num_indices == 0 {
-                // num_empty += 1;
-                continue;
+            // let mut num: u32 = 0;
+            // let mut num_empty: u32 = 0;
+
+            for (_, mesh) in self.mapblock_meshes.iter() {
+                if mesh.num_indices == 0 {
+                    // num_empty += 1;
+                    continue;
+                }
+                pass.set_index_buffer(
+                    mesh.index_buffer.as_ref().unwrap().slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
+                pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+                // num += 1;
             }
-            pass.set_index_buffer(
-                mesh.index_buffer.as_ref().unwrap().slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
-            pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
-            // num += 1;
-        }
 
-        /*
-        println!(
-            "dtime: {:.4}; Meshes: {} + {} empty; total runs {}",
-            dtime, num, num_empty, self.remesh_counter_total
-        );
-        */
+            /*
+            println!(
+                "dtime: {:.4}; Meshes: {} + {} empty; total runs {}",
+                dtime, num, num_empty, self.remesh_counter_total
+            );
+            */
+        }
 
         drop(pass);
 
@@ -326,7 +288,72 @@ impl State {
         output.present();
     }
 
+    fn setup_mapblock_rendering(&mut self, data: MapblockTextureData) {
+        assert!(self.mapblock_texture_data.is_none());
+        assert!(self.render_pipeline.is_none());
+
+
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Mapblock pipeline layout"),
+                bind_group_layouts: &[&self.camera.bind_group_layout(), &data.bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let shader = self
+            .device
+            .create_shader_module(wgpu::include_wgsl!("mapblock_shader.wgsl"));
+
+        let render_pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Mapblock render pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[meshgen::Vertex::layout()],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    // Irrlicht's fault
+                    front_face: wgpu::FrontFace::Cw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    ..wgpu::PrimitiveState::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: texture::DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.surface_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview: None,
+                cache: None,
+            });
+
+        self.mapblock_texture_data = Some(data);
+        self.render_pipeline = Some(render_pipeline);
+    }
+
     fn insert_mapblock_mesh(&mut self, mesh: MapblockMesh) {
+        assert!(self.mapblock_texture_data.is_some());
+        assert!(self.render_pipeline.is_some());
+
         self.remesh_counter_total += 1;
 
         let counter = self.remesh_counter.entry(mesh.blockpos.vec()).or_insert(0);
@@ -469,6 +496,9 @@ impl ApplicationHandler for App {
         while let Ok(event) = state.client_rx.try_recv() {
             match event {
                 ClientToMainEvent::PlayerPos(pos) => state.camera_controller.set_pos(pos),
+                ClientToMainEvent::MapblockTextureData(data) => {
+                    state.setup_mapblock_rendering(data)
+                }
                 ClientToMainEvent::MapblockMesh(mesh) => state.insert_mapblock_mesh(mesh),
             }
         }

@@ -126,6 +126,13 @@ impl Meshgen {
             ],
         });
 
+        main_tx.send(ClientToMainEvent::MapblockTextureData(
+            MapblockTextureData {
+                bind_group_layout,
+                bind_group,
+            },
+        )).unwrap();
+
         println!("Loaded {} textures", texture_vec.len());
 
         Self {
@@ -192,6 +199,11 @@ pub struct MapblockMesh {
     /// None if num_indices == 0
     pub vertex_buffer: Option<wgpu::Buffer>,
     pub timestamp_task_spawned: Instant,
+}
+
+pub struct MapblockTextureData {
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
 }
 
 /// A task for generating a single mapblock mesh and uploading it to the GPU.

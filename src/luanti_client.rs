@@ -18,13 +18,14 @@ use tokio::sync::mpsc;
 
 use crate::camera_controller::PlayerPos;
 use crate::map::{LuantiMap, NEIGHBOR_DIRS};
-use crate::meshgen::{MapblockMesh, MediaPathMap, Meshgen, NodeDefMap};
+use crate::meshgen::{MapblockMesh, MapblockTextureData, MediaPathMap, Meshgen, NodeDefMap};
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
 
 pub enum ClientToMainEvent {
     PlayerPos(PlayerPos),
+    MapblockTextureData(MapblockTextureData),
     MapblockMesh(MapblockMesh),
 }
 
