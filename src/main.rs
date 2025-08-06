@@ -233,7 +233,12 @@ impl State {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 140.0 / 255.0,
+                        g: 186.0 / 255.0,
+                        b: 250.0 / 255.0,
+                        a: 1.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -291,7 +296,6 @@ impl State {
     fn setup_mapblock_rendering(&mut self, data: MapblockTextureData) {
         assert!(self.mapblock_texture_data.is_none());
         assert!(self.render_pipeline.is_none());
-
 
         let pipeline_layout = self
             .device

@@ -1,9 +1,10 @@
 use std::num::NonZero;
+use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf, time::Instant};
 
-use glam::{I16Vec3, Vec3};
+use glam::{I16Vec3, Vec2, Vec3};
 use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
-use luanti_protocol::types::ContentFeatures;
+use luanti_protocol::types::{ContentFeatures, DrawType};
 use tokio::sync::mpsc;
 use wgpu::util::DeviceExt;
 
@@ -24,9 +25,9 @@ pub struct Meshgen {
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     pool: rayon::ThreadPool,
 
-    node_def: NodeDefMap,
+    node_def: Arc<NodeDefMap>,
     texture_vec: TextureVec,
-    texture_map: TextureMap,
+    texture_map: Arc<TextureMap>,
 }
 
 /// A thread pool for generating mapblock meshes and uploading them to the GPU.
@@ -126,12 +127,14 @@ impl Meshgen {
             ],
         });
 
-        main_tx.send(ClientToMainEvent::MapblockTextureData(
-            MapblockTextureData {
-                bind_group_layout,
-                bind_group,
-            },
-        )).unwrap();
+        main_tx
+            .send(ClientToMainEvent::MapblockTextureData(
+                MapblockTextureData {
+                    bind_group_layout,
+                    bind_group,
+                },
+            ))
+            .unwrap();
 
         println!("Loaded {} textures", texture_vec.len());
 
@@ -140,9 +143,9 @@ impl Meshgen {
             queue,
             main_tx,
             pool,
-            node_def,
+            node_def: Arc::new(node_def),
             texture_vec,
-            texture_map,
+            texture_map: Arc::new(texture_map),
         }
     }
 
@@ -152,6 +155,8 @@ impl Meshgen {
         MeshgenTask::spawn(
             self.device.clone(),
             self.main_tx.clone(),
+            self.node_def.clone(),
+            self.texture_map.clone(),
             &self.pool,
             map,
             blockpos,
@@ -166,13 +171,15 @@ impl Meshgen {
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     position: Vec3,
+    uv: Vec2,
     normal: Vec3,
+    texture_index: u32,
 }
 
 impl Vertex {
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRIBS: [wgpu::VertexAttribute; 2] =
-            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+        const ATTRIBS: [wgpu::VertexAttribute; 4] =
+            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x3, 3 => Uint32];
 
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
@@ -210,6 +217,8 @@ pub struct MapblockTextureData {
 struct MeshgenTask {
     device: wgpu::Device,
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
+    node_def: Arc<NodeDefMap>,
+    texture_map: Arc<TextureMap>,
     data: MeshgenMapData,
     timestamp_task_spawned: Instant,
 }
@@ -219,6 +228,8 @@ impl MeshgenTask {
     fn spawn(
         device: wgpu::Device,
         main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
+        node_def: Arc<NodeDefMap>,
+        texture_map: Arc<TextureMap>,
         pool: &rayon::ThreadPool,
         map: &LuantiMap,
         blockpos: MapBlockPos,
@@ -255,6 +266,8 @@ impl MeshgenTask {
             pool.install(move || {
                 MeshgenTask {
                     device,
+                    node_def,
+                    texture_map,
                     main_tx,
                     data,
                     timestamp_task_spawned: t,
@@ -335,35 +348,35 @@ impl MeshgenTask {
 #[cfg_attr(rustfmt, rustfmt_skip)]
 const CUBE_VERTICES: &[Vertex] = &[
     // Top
-    Vertex { position: Vec3::new(-0.5, 0.5, 0.5), normal: Vec3::new(0.0, 1.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, 0.5, 0.5), normal: Vec3::new(0.0, 1.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, 0.5, -0.5), normal: Vec3::new(0.0, 1.0, 0.0) },
-    Vertex { position: Vec3::new(-0.5, 0.5, -0.5), normal: Vec3::new(0.0, 1.0, 0.0) },
+    Vertex { position: Vec3::new(-0.5, 0.5, 0.5), uv: Vec2::new(0.0, 0.0), normal: Vec3::new(0.0, 1.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, 0.5, 0.5), uv: Vec2::new(1.0, 0.0), normal: Vec3::new(0.0, 1.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, 0.5, -0.5), uv: Vec2::new(1.0, 1.0), normal: Vec3::new(0.0, 1.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, 0.5, -0.5), uv: Vec2::new(0.0, 1.0), normal: Vec3::new(0.0, 1.0, 0.0), texture_index: 0 },
     // Bottom
-    Vertex { position: Vec3::new(-0.5, -0.5, -0.5), normal: Vec3::new(0.0, -1.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, -0.5, -0.5), normal: Vec3::new(0.0, -1.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, -0.5, 0.5), normal: Vec3::new(0.0, -1.0, 0.0) },
-    Vertex { position: Vec3::new(-0.5, -0.5, 0.5), normal: Vec3::new(0.0, -1.0, 0.0) },
+    Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec2::new(0.0, 0.0), normal: Vec3::new(0.0, -1.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, -0.5, -0.5), uv: Vec2::new(1.0, 0.0), normal: Vec3::new(0.0, -1.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, -0.5, 0.5), uv: Vec2::new(1.0, 1.0), normal: Vec3::new(0.0, -1.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec2::new(0.0, 1.0), normal: Vec3::new(0.0, -1.0, 0.0), texture_index: 0 },
     // Right
-    Vertex { position: Vec3::new(0.5, 0.5, -0.5), normal: Vec3::new(1.0, 0.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, 0.5, 0.5), normal: Vec3::new(1.0, 0.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, -0.5, 0.5), normal: Vec3::new(1.0, 0.0, 0.0) },
-    Vertex { position: Vec3::new(0.5, -0.5, -0.5), normal: Vec3::new(1.0, 0.0, 0.0) },
+    Vertex { position: Vec3::new(0.5, 0.5, -0.5), uv: Vec2::new(0.0, 0.0), normal: Vec3::new(1.0, 0.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, 0.5, 0.5), uv: Vec2::new(1.0, 0.0), normal: Vec3::new(1.0, 0.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, -0.5, 0.5), uv: Vec2::new(1.0, 1.0), normal: Vec3::new(1.0, 0.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, -0.5, -0.5), uv: Vec2::new(0.0, 1.0), normal: Vec3::new(1.0, 0.0, 0.0), texture_index: 0 },
     // Left
-    Vertex { position: Vec3::new(-0.5, 0.5, 0.5), normal: Vec3::new(-1.0, 0.0, 0.0) },
-    Vertex { position: Vec3::new(-0.5, 0.5, -0.5), normal: Vec3::new(-1.0, 0.0, 0.0) },
-    Vertex { position: Vec3::new(-0.5, -0.5, -0.5), normal: Vec3::new(-1.0, 0.0, 0.0) },
-    Vertex { position: Vec3::new(-0.5, -0.5, 0.5), normal: Vec3::new(-1.0, 0.0, 0.0) },
+    Vertex { position: Vec3::new(-0.5, 0.5, 0.5), uv: Vec2::new(0.0, 0.0), normal: Vec3::new(-1.0, 0.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, 0.5, -0.5), uv: Vec2::new(1.0, 0.0), normal: Vec3::new(-1.0, 0.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec2::new(1.0, 1.0), normal: Vec3::new(-1.0, 0.0, 0.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec2::new(0.0, 1.0), normal: Vec3::new(-1.0, 0.0, 0.0), texture_index: 0 },
     // Back
-    Vertex { position: Vec3::new(0.5, 0.5, 0.5), normal: Vec3::new(0.0, 0.0, 1.0) },
-    Vertex { position: Vec3::new(-0.5, 0.5, 0.5), normal: Vec3::new(0.0, 0.0, 1.0) },
-    Vertex { position: Vec3::new(-0.5, -0.5, 0.5), normal: Vec3::new(0.0, 0.0, 1.0) },
-    Vertex { position: Vec3::new(0.5, -0.5, 0.5), normal: Vec3::new(0.0, 0.0, 1.0) },
+    Vertex { position: Vec3::new(0.5, 0.5, 0.5), uv: Vec2::new(0.0, 0.0), normal: Vec3::new(0.0, 0.0, 1.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, 0.5, 0.5), uv: Vec2::new(1.0, 0.0), normal: Vec3::new(0.0, 0.0, 1.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, -0.5, 0.5), uv: Vec2::new(1.0, 1.0), normal: Vec3::new(0.0, 0.0, 1.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, -0.5, 0.5), uv: Vec2::new(0.0, 1.0), normal: Vec3::new(0.0, 0.0, 1.0), texture_index: 0 },
     // Front
-    Vertex { position: Vec3::new(-0.5, 0.5, -0.5), normal: Vec3::new(0.0, 0.0, -1.0) },
-    Vertex { position: Vec3::new(0.5, 0.5, -0.5), normal: Vec3::new(0.0, 0.0, -1.0) },
-    Vertex { position: Vec3::new(0.5, -0.5, -0.5), normal: Vec3::new(0.0, 0.0, -1.0) },
-    Vertex { position: Vec3::new(-0.5, -0.5, -0.5), normal: Vec3::new(0.0, 0.0, -1.0) },
+    Vertex { position: Vec3::new(-0.5, 0.5, -0.5), uv: Vec2::new(0.0, 0.0), normal: Vec3::new(0.0, 0.0, -1.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, 0.5, -0.5), uv: Vec2::new(1.0, 0.0), normal: Vec3::new(0.0, 0.0, -1.0), texture_index: 0 },
+    Vertex { position: Vec3::new(0.5, -0.5, -0.5), uv: Vec2::new(1.0, 1.0), normal: Vec3::new(0.0, 0.0, -1.0), texture_index: 0 },
+    Vertex { position: Vec3::new(-0.5, -0.5, -0.5), uv: Vec2::new(0.0, 1.0), normal: Vec3::new(0.0, 0.0, -1.0), texture_index: 0 },
 ];
 
 // Compare to Luanti, content_mapblock.cpp, quad_indices
@@ -373,7 +386,12 @@ const QUAD_INDICES: &[u32] = &[0, 1, 2, 2, 3, 0];
 impl MeshgenTask {
     /// Generates the mesh for a single node within the mapblock.
     fn generate_single(&self, mesh: &mut Mesh, pos: I16Vec3, node: MapNode) {
-        if !node.is_solid() {
+        // TODO: fallback to a "unknown node" definition
+        let Some(def) = self.node_def.get(&node.content_id) else {
+            return;
+        };
+
+        if def.drawtype == DrawType::AirLike {
             return;
         }
 
@@ -384,8 +402,27 @@ impl MeshgenTask {
             // node is solid or not. The mesh will be re-generated once the neighboring
             // mapblock arrives.
             if let Some(n_node) = self.data.get_node(MapNodePos(n_pos))
-                && !n_node.is_solid()
+                // TODO: air has no nodedef yet, thus this
+                && self
+                    .node_def
+                    .get(&n_node.content_id)
+                    .and_then(|def| Some(def.drawtype != DrawType::Normal))
+                    .unwrap_or(true)
             {
+                let texture_name = &def.tiledef[face_index].name;
+                // TODO: get a proper fallback texture
+                let texture_index = *self.texture_map.get(texture_name).unwrap_or(&0) as u32;
+
+                /*
+                println!(
+                    "Texture id {} for node {} face {}",
+                    texture,
+                    def.and_then(|def| Some(def.name.as_str()))
+                        .unwrap_or("<unknown>"),
+                    face_index
+                );
+                */
+
                 let index_offset = mesh.vertices.len() as u32;
                 let vertex_offset =
                     MapNodePos::from(self.data.get_blockpos()).0.as_vec3() + pos.as_vec3();
@@ -396,6 +433,7 @@ impl MeshgenTask {
                     .iter()
                     .map(|vertex| Vertex {
                         position: vertex_offset + vertex.position,
+                        texture_index,
                         ..*vertex
                     });
                 mesh.vertices.extend(vertices);

@@ -12,13 +12,17 @@ var samplers: binding_array<sampler>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) texture_index: u32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) texture_index: u32,
 }
 
 @vertex
@@ -28,7 +32,9 @@ fn vs_main(
     var out: VertexOutput;
     out.clip_position = camera.view_proj * vec4<f32>(model.position, 1.0);
     out.position = model.position;
+    out.uv = model.uv;
     out.normal = model.normal;
+    out.texture_index = model.texture_index;
     return out;
 }
 
@@ -47,7 +53,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(material_color * light, 1.0);
     */
 
-    var color: vec3<f32> = textureSample(textures[201], samplers[201], in.position.xz).rgb;
+    var tex_color: vec4<f32> = textureSample(textures[in.texture_index], samplers[in.texture_index], in.uv);
+    // TODO: this is probably not the proper way to do this
+    if (tex_color.a == 0.0) {
+        discard;
+    }
+
+    var color: vec3<f32> = tex_color.rgb;
 
     if (abs(in.normal.x) > 0.001) {
         // +x or -x
