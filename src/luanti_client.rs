@@ -1,8 +1,12 @@
+use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use base64::Engine;
+use base64::engine::DecodePaddingMode;
 use glam::Vec3;
 use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use luanti_protocol::LuantiClient;
@@ -24,14 +28,25 @@ pub enum MainToClientEvent {
     PlayerPos { pos: Vec3, yaw: f32, pitch: f32 },
 }
 
+#[derive(Debug, PartialEq)]
+enum ClientState {
+    Connected,
+    AuthSent,
+    Init2Sent,
+    ReadySent,
+}
+
 pub struct LuantiClientRunner {
     device: Arc<wgpu::Device>,
     main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
     meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
 
+    state: ClientState,
     client: LuantiClient,
     map: LuantiMap,
     meshgen_pool: rayon::ThreadPool,
+
+    media_paths: HashMap<String, PathBuf>,
 }
 
 impl LuantiClientRunner {
@@ -58,9 +73,12 @@ impl LuantiClientRunner {
                 main_rx,
                 meshgen_tx,
 
+                state: ClientState::Connected,
                 client,
                 map,
                 meshgen_pool,
+
+                media_paths: HashMap::new(),
             };
             runner.run().await
         });
@@ -130,8 +148,12 @@ impl LuantiClientRunner {
 
     fn process_network_command(&mut self, command: ToClientCommand) -> anyhow::Result<()> {
         match command {
-            // TODO: check connection/auth state first
-            ToClientCommand::Hello(spec) => {
+            ToClientCommand::Hello(spec) => 'b: {
+                if self.state != ClientState::Connected {
+                    println!("Received Hello, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
                 if spec.auth_mechs.first_srp {
                     // register
                     self.client
@@ -140,21 +162,62 @@ impl LuantiClientRunner {
                             verification_key: vec![],
                             is_empty: false, // only used for "disallow empty passwords"
                         })))?;
+                    self.state = ClientState::AuthSent;
                 } else {
                     // cannot login as that would require actually implementing srp :)
                     panic!("received unsupported or invalid auth method");
                 }
             }
 
-            // TODO: check connection/auth state first
-            ToClientCommand::AuthAccept(_spec) => {
+            ToClientCommand::AuthAccept(_spec) => 'b: {
+                if self.state != ClientState::AuthSent {
+                    println!("Received AuthAccept, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
                 self.client
                     .send(ToServerCommand::Init2(Box::new(Init2Spec {
                         lang: Some(String::from("en")),
                     })))?;
+                self.state = ClientState::Init2Sent;
+            }
 
-                // TODO: wait for item definitions, wait for media announce, request media, wait for media, etc. first
+            ToClientCommand::AnnounceMedia(spec) => 'b: {
+                if self.state != ClientState::Init2Sent {
+                    println!("Received AnnounceMedia, invalid for state {:?}", self.state);
+                    break 'b;
+                }
 
+                let mut cache_path = std::env::home_dir().unwrap();
+                cache_path.push(".minetest/cache/media");
+
+                let base64 = base64::engine::GeneralPurpose::new(
+                    &base64::alphabet::STANDARD,
+                    base64::engine::GeneralPurposeConfig::new()
+                        // Luanti encodes without padding (currently)
+                        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+                );
+
+                for item in spec.files {
+                    // The encoding choices made here are very curious
+                    let Ok(sha1_raw) = base64.decode(&item.sha1_base64) else {
+                        println!("Invalid base64 {} for {}", item.sha1_base64, item.name);
+                        continue;
+                    };
+                    let sha1_hex = hex::encode(sha1_raw);
+
+                    let path = cache_path.join(sha1_hex);
+                    if path.exists() {
+                        self.media_paths.insert(item.name, path);
+                    } else {
+                        // TODO: download missing media
+                        println!("Missing media file in cache: {} / {:?}", item.name, path);
+                    }
+                }
+
+                println!("Found {} media files in cache", self.media_paths.len());
+
+                // TODO: wait for item definitions etc. first
                 self.client
                     .send(ToServerCommand::ClientReady(Box::new(ClientReadySpec {
                         major_ver: 0,
@@ -164,9 +227,15 @@ impl LuantiClientRunner {
                         full_ver: String::from("Cubetonic 0.1.0"),
                         formspec_ver: Some(8), // corresponds to proto ver 46
                     })))?;
+                self.state = ClientState::ReadySent;
             }
 
-            ToClientCommand::Blockdata(spec) => {
+            ToClientCommand::Blockdata(spec) => 'b: {
+                if self.state != ClientState::ReadySent {
+                    println!("Received Blockdata, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
                 // TODO: Luanti only sends this after meshgen? batching?
                 self.client
                     .send(ToServerCommand::GotBlocks(Box::new(GotBlocksSpec {
@@ -179,13 +248,23 @@ impl LuantiClientRunner {
                 self.generate_mapblock_with_neighbors(blockpos);
             }
 
-            ToClientCommand::Addnode(spec) => {
+            ToClientCommand::Addnode(spec) => 'b: {
+                if self.state != ClientState::ReadySent {
+                    println!("Received Addnode, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
                 if let Some(blockpos) = self.map.set_node(&MapNodePos(spec.pos), spec.node) {
                     self.generate_mapblock_with_neighbors(blockpos);
                 }
             }
 
-            ToClientCommand::Removenode(spec) => {
+            ToClientCommand::Removenode(spec) => 'b: {
+                if self.state != ClientState::ReadySent {
+                    println!("Received Removenode, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
                 if let Some(blockpos) = self.map.set_node(
                     &MapNodePos(spec.pos),
                     MapNode {
