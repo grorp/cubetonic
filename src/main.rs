@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use glam::{I16Vec3, Vec3};
 use tokio::sync::mpsc;
-use wgpu::SurfaceError;
+use wgpu::{FeaturesWGPU, FeaturesWebGPU, SurfaceError};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -65,8 +65,43 @@ impl State {
             .await
             .unwrap();
 
+        let avail_features = adapter.features().features_wgpu;
+        let avail_limits = adapter.limits();
+
+        let mut bindless_features = FeaturesWGPU::TEXTURE_BINDING_ARRAY
+            | FeaturesWGPU::PARTIALLY_BOUND_BINDING_ARRAY
+            | FeaturesWGPU::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+        let mut limits = wgpu::Limits::defaults();
+
+        if avail_features.contains(bindless_features) {
+            let max_other = avail_limits.max_binding_array_elements_per_shader_stage;
+            let max_samplers = avail_limits.max_binding_array_sampler_elements_per_shader_stage;
+            limits.max_binding_array_elements_per_shader_stage = max_other;
+            limits.max_binding_array_sampler_elements_per_shader_stage = max_samplers;
+
+            println!(
+                "wgpu features for bindless textures are available. \
+                max_binding_array_elements_per_shader_stage: {}, \
+                max_binding_array_sampler_elements_per_shader_stage: {}",
+                max_other, max_samplers
+            );
+        } else {
+            println!(
+                "Missing wgpu features for bindless textures: {:?}",
+                bindless_features.difference(avail_features)
+            );
+            bindless_features = FeaturesWGPU::empty();
+        }
+
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features {
+                    features_wgpu: bindless_features,
+                    features_webgpu: FeaturesWebGPU::empty(),
+                },
+                required_limits: limits,
+                ..wgpu::DeviceDescriptor::default()
+            })
             .await
             .unwrap();
         let device = Arc::new(device);
@@ -185,7 +220,7 @@ impl State {
             },
         );
         println!(
-            "Surface configured: size {:?}, format {:?}",
+            "Surface configured, size: {:?}, format: {:?}",
             self.size, self.surface_format
         );
     }
