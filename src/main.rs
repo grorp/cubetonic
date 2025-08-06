@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use glam::I16Vec3;
 use tokio::sync::mpsc;
+use wgpu::SurfaceError;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -218,7 +219,16 @@ impl State {
             .update_camera(&mut self.camera.params, dtime);
         self.camera.update(&self.queue);
 
-        let output = self.surface.get_current_texture().unwrap();
+        let mut output = self.surface.get_current_texture();
+        // Fixes a crash when pressing F11 (toggle fullscreen) on one of my systems with Wayland
+        // TODO: this shouldn't be necessary, winit bug?
+        if let Err(err) = &output
+            && *err == SurfaceError::Outdated
+        {
+            self.resize(self.window.inner_size());
+            output = self.surface.get_current_texture();
+        }
+        let output = output.unwrap();
 
         let view = output
             .texture
