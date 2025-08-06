@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use base64::Engine;
@@ -15,13 +13,12 @@ use luanti_protocol::commands::client_to_server::{
     ToServerCommand,
 };
 use luanti_protocol::commands::server_to_client::ToClientCommand;
-use luanti_protocol::types::ContentFeatures;
 use rand::Rng;
 use tokio::sync::mpsc;
 
 use crate::camera_controller::PlayerPos;
 use crate::map::{LuantiMap, NEIGHBOR_DIRS};
-use crate::meshgen::{MapblockMesh, Meshgen};
+use crate::meshgen::{MapblockMesh, MediaPathMap, Meshgen, NodeDefMap};
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
@@ -44,22 +41,24 @@ enum ClientState {
 }
 
 pub struct LuantiClientRunner {
-    device: Arc<wgpu::Device>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
 
     state: ClientState,
     client: LuantiClient,
     map: LuantiMap,
-    meshgen: Meshgen,
 
-    node_def: HashMap<ContentId, ContentFeatures>,
-    media_paths: HashMap<String, PathBuf>,
+    node_def: Option<NodeDefMap>,
+    media_paths: Option<MediaPathMap>,
+    meshgen: Option<Meshgen>,
 }
 
 impl LuantiClientRunner {
     pub async fn spawn(
-        device: Arc<wgpu::Device>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
         main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
         main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
     ) {
@@ -70,20 +69,19 @@ impl LuantiClientRunner {
 
             let map = LuantiMap::new();
 
-            let meshgen = Meshgen::new(device.clone(), main_tx.clone());
-
             let mut runner = LuantiClientRunner {
                 device,
+                queue,
                 main_tx,
                 main_rx,
 
                 state: ClientState::Connected,
                 client,
                 map,
-                meshgen,
 
-                node_def: HashMap::new(),
-                media_paths: HashMap::new(),
+                node_def: None,
+                media_paths: None,
+                meshgen: None,
             };
             runner.run().await
         });
@@ -129,14 +127,16 @@ impl LuantiClientRunner {
     }
 
     fn generate_mapblock_with_neighbors(&self, blockpos: MapBlockPos) {
-        self.meshgen
-            .submit(&self.map, blockpos, self.map.get_block(&blockpos).unwrap());
+        assert!(self.state == ClientState::ReadySent);
+        let meshgen = self.meshgen.as_ref().unwrap();
+
+        meshgen.submit(&self.map, blockpos, self.map.get_block(&blockpos).unwrap());
 
         for dir in NEIGHBOR_DIRS {
             if let Some(n_blockpos) = blockpos.checked_add(dir)
                 && let Some(n_block) = self.map.get_block(&n_blockpos)
             {
-                self.meshgen.submit(&self.map, n_blockpos, n_block);
+                meshgen.submit(&self.map, n_blockpos, n_block);
             }
         }
     }
@@ -179,23 +179,29 @@ impl LuantiClientRunner {
 
             // TODO: check state properly
             ToClientCommand::Nodedef(spec) => 'b: {
-                if self.state != ClientState::Init2Sent || !self.node_def.is_empty() {
+                if self.state != ClientState::Init2Sent || self.node_def.is_some() {
                     println!("Received Nodedef, invalid for state {:?}", self.state);
                     break 'b;
                 }
 
+                let mut node_def = HashMap::new();
+
                 for (id, def) in spec.node_def.content_features {
-                    self.node_def.insert(ContentId(id), def);
+                    node_def.insert(ContentId(id), def);
                 }
-                println!("Received {} node definitions", self.node_def.len());
+
+                println!("Received {} node definitions", node_def.len());
+                self.node_def = Some(node_def);
             }
 
             // TODO: check state properly
             ToClientCommand::AnnounceMedia(spec) => 'b: {
-                if self.state != ClientState::Init2Sent || !self.media_paths.is_empty() {
+                if self.state != ClientState::Init2Sent || self.media_paths.is_some() {
                     println!("Received AnnounceMedia, invalid for state {:?}", self.state);
                     break 'b;
                 }
+
+                let mut media_paths = HashMap::new();
 
                 let mut cache_path = std::env::home_dir().unwrap();
                 cache_path.push(".minetest/cache/media");
@@ -217,17 +223,26 @@ impl LuantiClientRunner {
 
                     let path = cache_path.join(sha1_hex);
                     if path.exists() {
-                        self.media_paths.insert(item.name, path);
+                        media_paths.insert(item.name, path);
                     } else {
                         // TODO: download missing media
                         println!("Missing media file in cache: {} / {:?}", item.name, path);
                     }
                 }
 
-                println!("Found {} media files in cache", self.media_paths.len());
+                println!("Found {} media files in cache", media_paths.len());
+                self.media_paths = Some(media_paths);
 
-                // TODO: update state properly
-                assert!(!self.node_def.is_empty());
+                // TODO: properly check whether loading is finished before updating state
+
+                self.meshgen = Some(Meshgen::new(
+                    self.device.clone(),
+                    self.queue.clone(),
+                    self.main_tx.clone(),
+                    self.node_def.take().unwrap(),
+                    self.media_paths.take().unwrap(),
+                ));
+
                 self.client
                     .send(ToServerCommand::ClientReady(Box::new(ClientReadySpec {
                         major_ver: 0,

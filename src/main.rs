@@ -25,7 +25,7 @@ mod texture;
 
 struct State {
     window: Arc<Window>,
-    device: Arc<wgpu::Device>,
+    device: wgpu::Device,
     queue: wgpu::Queue,
 
     surface: wgpu::Surface<'static>,
@@ -104,7 +104,6 @@ impl State {
             })
             .await
             .unwrap();
-        let device = Arc::new(device);
 
         let size = window.inner_size();
         let cap = surface.get_capabilities(&adapter);
@@ -173,7 +172,7 @@ impl State {
 
         let (client_tx, main_rx) = mpsc::unbounded_channel();
         let (main_tx, client_rx) = mpsc::unbounded_channel();
-        LuantiClientRunner::spawn(device.clone(), main_tx, main_rx).await;
+        LuantiClientRunner::spawn(device.clone(), queue.clone(), main_tx, main_rx).await;
 
         let state = State {
             window,

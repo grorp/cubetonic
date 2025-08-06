@@ -1,27 +1,43 @@
-use std::{sync::Arc, time::Instant};
+use std::num::NonZero;
+use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use glam::{I16Vec3, Vec3};
-use luanti_core::{MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
+use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
+use luanti_protocol::types::ContentFeatures;
 use tokio::sync::mpsc;
 use wgpu::util::DeviceExt;
 
-use crate::{
-    luanti_client::ClientToMainEvent,
-    map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS},
-};
+use crate::luanti_client::ClientToMainEvent;
+use crate::map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::texture::Texture;
+
+pub type NodeDefMap = HashMap<ContentId, ContentFeatures>;
+pub type MediaPathMap = HashMap<String, PathBuf>;
+
+pub type TextureVec = Vec<Texture>;
+// contains indices into a TextureVec
+pub type TextureMap = HashMap<String, usize>;
 
 pub struct Meshgen {
-    device: Arc<wgpu::Device>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     pool: rayon::ThreadPool,
+
+    node_def: NodeDefMap,
+    texture_vec: TextureVec,
+    texture_map: TextureMap,
 }
 
 /// A thread pool for generating mapblock meshes and uploading them to the GPU.
 impl Meshgen {
     /// Creates the meshgen, setting up the thread pool.
     pub fn new(
-        device: Arc<wgpu::Device>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
         main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
+        mut node_def: NodeDefMap,
+        media_paths: MediaPathMap,
     ) -> Self {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(0)
@@ -29,10 +45,97 @@ impl Meshgen {
             .build()
             .unwrap();
 
+        let mut texture_vec: TextureVec = Vec::new();
+        let mut texture_map: TextureMap = HashMap::new();
+
+        for (_, def) in &mut node_def {
+            for tile in &mut def.tiledef {
+                if tile.name.is_empty() {
+                    continue;
+                }
+
+                // strip texture modifiers
+                let name_simple = tile.name.split('^').next().unwrap();
+                tile.name = String::from(name_simple);
+
+                if texture_map.contains_key(&tile.name) {
+                    continue;
+                }
+
+                let path = media_paths.get(&tile.name);
+                let Some(path) = path else {
+                    println!("Missing texture {} for node {}", tile.name, def.name);
+                    tile.name = String::from("");
+                    continue;
+                };
+                let Ok(texture) = Texture::new(&device, &queue, &tile.name, &path) else {
+                    println!("Failed to load texture {} from {:?}", tile.name, path);
+                    tile.name = String::from("");
+                    continue;
+                };
+                texture_vec.push(texture);
+                texture_map.insert(tile.name.clone(), texture_vec.len() - 1);
+            }
+        }
+
+        let mut texture_view_vec: Vec<&wgpu::TextureView> = Vec::with_capacity(texture_vec.len());
+        let mut sampler_vec: Vec<&wgpu::Sampler> = Vec::with_capacity(texture_vec.len());
+        for texture in &texture_vec {
+            texture_view_vec.push(&texture.view);
+            sampler_vec.push(&texture.sampler);
+        }
+
+        // TODO: check if we are within limits (but we almost definitely are if
+        // the bindless features are available)
+        let count = NonZero::new(texture_vec.len() as u32).unwrap();
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Node texture bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: Some(count),
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: Some(count),
+                },
+            ],
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Node texture bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_vec),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::SamplerArray(&sampler_vec),
+                },
+            ],
+        });
+
+        println!("Loaded {} textures", texture_vec.len());
+
         Self {
             device,
+            queue,
             main_tx,
             pool,
+            node_def,
+            texture_vec,
+            texture_map,
         }
     }
 
@@ -93,7 +196,7 @@ pub struct MapblockMesh {
 
 /// A task for generating a single mapblock mesh and uploading it to the GPU.
 struct MeshgenTask {
-    device: Arc<wgpu::Device>,
+    device: wgpu::Device,
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     data: MeshgenMapData,
     timestamp_task_spawned: Instant,
@@ -102,7 +205,7 @@ struct MeshgenTask {
 impl MeshgenTask {
     /// Spawns the meshgen task on the thread pool.
     fn spawn(
-        device: Arc<wgpu::Device>,
+        device: wgpu::Device,
         main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
         pool: &rayon::ThreadPool,
         map: &LuantiMap,
