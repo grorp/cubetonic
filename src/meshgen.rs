@@ -62,6 +62,7 @@ impl MeshgenTask {
         device: Arc<wgpu::Device>,
         result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
         map: &LuantiMap,
+        pool: &rayon::ThreadPool,
         blockpos: MapBlockPos,
         block: &MapBlockNodes,
     ) {
@@ -93,7 +94,7 @@ impl MeshgenTask {
 
             let data = MeshgenMapData::new(map, blockpos, block);
 
-            tokio::task::spawn_blocking(move || {
+            pool.install(move || {
                 MeshgenTask {
                     device,
                     result_sender,

@@ -31,6 +31,7 @@ pub struct LuantiClientRunner {
 
     client: LuantiClient,
     map: LuantiMap,
+    meshgen_pool: rayon::ThreadPool,
 }
 
 impl LuantiClientRunner {
@@ -46,6 +47,12 @@ impl LuantiClientRunner {
 
             let map = LuantiMap::new();
 
+            let meshgen_pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(0)
+                .thread_name(|index| format!("Meshgen #{}", index))
+                .build()
+                .unwrap();
+
             let mut runner = LuantiClientRunner {
                 device,
                 main_rx,
@@ -53,6 +60,7 @@ impl LuantiClientRunner {
 
                 client,
                 map,
+                meshgen_pool,
             };
             runner.run().await
         });
@@ -102,6 +110,7 @@ impl LuantiClientRunner {
             self.device.clone(),
             self.meshgen_tx.clone(),
             &self.map,
+            &self.meshgen_pool,
             blockpos,
             block,
         );
