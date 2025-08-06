@@ -4,7 +4,7 @@ use glam::{I16Vec3, Vec3};
 use luanti_core::{MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use wgpu::util::DeviceExt;
 
-use crate::map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::{luanti_client::ClientToMainEvent, map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS}};
 
 /// The representation of a vertex, used by the CPU-side mesh representation,
 /// and byte-serializable for uploading to GPU buffers.
@@ -50,7 +50,7 @@ pub struct MapblockMesh {
 /// Generates mapblock meshes and uploads them to the GPU.
 pub struct MeshgenTask {
     device: Arc<wgpu::Device>,
-    result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
+    main_tx: tokio::sync::mpsc::UnboundedSender<ClientToMainEvent>,
     data: MeshgenMapData,
     timestamp_task_spawned: Instant,
 }
@@ -60,7 +60,7 @@ impl MeshgenTask {
     /// The finished MapblockMesh is returned using the provided UnboundedSender.
     pub fn spawn(
         device: Arc<wgpu::Device>,
-        result_sender: tokio::sync::mpsc::UnboundedSender<MapblockMesh>,
+        main_tx: tokio::sync::mpsc::UnboundedSender<ClientToMainEvent>,
         map: &LuantiMap,
         pool: &rayon::ThreadPool,
         blockpos: MapBlockPos,
@@ -80,14 +80,14 @@ impl MeshgenTask {
         if empty {
             println!("Skipped spawning meshgen task for empty {}", blockpos.vec());
 
-            result_sender
-                .send(MapblockMesh {
+            main_tx
+                .send(ClientToMainEvent::MapblockMesh(MapblockMesh {
                     blockpos: blockpos,
                     num_indices: 0,
                     index_buffer: None,
                     vertex_buffer: None,
                     timestamp_task_spawned: t,
-                })
+                }))
                 .unwrap();
         } else {
             println!("Spawning meshgen task for {}", blockpos.vec());
@@ -97,7 +97,7 @@ impl MeshgenTask {
             pool.install(move || {
                 MeshgenTask {
                     device,
-                    result_sender,
+                    main_tx,
                     data,
                     timestamp_task_spawned: t,
                 }
@@ -130,14 +130,14 @@ impl MeshgenTask {
                 self.data.get_blockpos().vec()
             );
 
-            self.result_sender
-                .send(MapblockMesh {
+            self.main_tx
+                .send(ClientToMainEvent::MapblockMesh(MapblockMesh {
                     blockpos: self.data.get_blockpos(),
                     num_indices: 0,
                     index_buffer: None,
                     vertex_buffer: None,
                     timestamp_task_spawned: self.timestamp_task_spawned,
-                })
+                }))
                 .unwrap();
             return;
         }
@@ -158,14 +158,14 @@ impl MeshgenTask {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        self.result_sender
-            .send(MapblockMesh {
+        self.main_tx
+            .send(ClientToMainEvent::MapblockMesh(MapblockMesh {
                 blockpos: self.data.get_blockpos(),
                 num_indices: mesh.indices.len() as u32,
                 index_buffer: Some(index_buffer),
                 vertex_buffer: Some(vertex_buffer),
                 timestamp_task_spawned: self.timestamp_task_spawned,
-            })
+            }))
             .unwrap();
     }
 }

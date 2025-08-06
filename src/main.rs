@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use glam::I16Vec3;
+use glam::{I16Vec3, Vec3};
 use tokio::sync::mpsc;
 use wgpu::SurfaceError;
 use winit::application::ApplicationHandler;
@@ -13,7 +13,7 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use luanti_client::LuantiClientRunner;
 
-use crate::luanti_client::MainToClientEvent;
+use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
 use crate::meshgen::MapblockMesh;
 
 mod camera;
@@ -43,7 +43,7 @@ struct State {
     last_send: Instant,
 
     client_tx: mpsc::UnboundedSender<MainToClientEvent>,
-    meshgen_rx: mpsc::UnboundedReceiver<MapblockMesh>,
+    client_rx: mpsc::UnboundedReceiver<ClientToMainEvent>,
 
     remesh_counter: HashMap<I16Vec3, usize>,
     mapblock_meshes: HashMap<I16Vec3, MapblockMesh>,
@@ -77,8 +77,9 @@ impl State {
         let camera = camera::Camera::new(
             &device,
             camera::CameraParams {
-                pos: (0.0, 0.0, -5.0).into(),
-                dir: (0.0, 0.0, 1.0).into(),
+                // These will be overwritten by the CameraController anyway
+                pos: Vec3::ZERO,
+                dir: Vec3::ZERO,
                 size,
             },
         );
@@ -134,9 +135,9 @@ impl State {
 
         let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
 
-        let (client_tx, client_rx) = mpsc::unbounded_channel();
-        let (meshgen_tx, meshgen_rx) = mpsc::unbounded_channel();
-        LuantiClientRunner::spawn(device.clone(), client_rx, meshgen_tx).await;
+        let (client_tx, main_rx) = mpsc::unbounded_channel();
+        let (main_tx, client_rx) = mpsc::unbounded_channel();
+        LuantiClientRunner::spawn(device.clone(), main_tx, main_rx).await;
 
         let state = State {
             window,
@@ -158,7 +159,7 @@ impl State {
             last_send: Instant::now(),
 
             client_tx,
-            meshgen_rx,
+            client_rx,
 
             remesh_counter: HashMap::new(),
             mapblock_meshes: HashMap::new(),
@@ -205,18 +206,14 @@ impl State {
 
         let send_dtime = (now - self.last_send).as_secs_f32();
         if send_dtime >= 0.1 {
+            let pos = self.camera_controller.get_pos();
             self.client_tx
-                .send(MainToClientEvent::PlayerPos {
-                    pos: self.camera.params.pos,
-                    yaw: self.camera_controller.yaw,
-                    pitch: self.camera_controller.pitch,
-                })
+                .send(MainToClientEvent::PlayerPos(pos.clone()))
                 .unwrap();
             self.last_send = now;
         }
 
-        self.camera_controller
-            .update_camera(&mut self.camera.params, dtime);
+        self.camera_controller.step(dtime, &mut self.camera.params);
         self.camera.update(&self.queue);
 
         let mut output = self.surface.get_current_texture();
@@ -286,6 +283,40 @@ impl State {
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         output.present();
+    }
+
+    fn insert_mapblock_mesh(&mut self, mesh: MapblockMesh) {
+        let counter = self.remesh_counter.entry(mesh.blockpos.vec()).or_insert(0);
+        *counter += 1;
+
+        let prev_mesh = self.mapblock_meshes.get_mut(&mesh.blockpos.vec());
+
+        if let Some(prev_mesh) = prev_mesh {
+            // A meshgen task for the same mapblock might have started
+            // later, but finished earlier than this one.
+            // Don't replace the new data with our outdated data in that case.
+            if mesh.timestamp_task_spawned > prev_mesh.timestamp_task_spawned {
+                println!(
+                    "Received mapblock mesh for {} [UPDATED] [#{}]",
+                    mesh.blockpos.vec(),
+                    counter,
+                );
+                *prev_mesh = mesh;
+            } else {
+                println!(
+                    "Received mapblock mesh for {} [UPDATED, OBSOLETE] [#{}]",
+                    mesh.blockpos.vec(),
+                    counter,
+                );
+            }
+        } else {
+            println!(
+                "Received mapblock mesh for {} [NEW] [#{}]",
+                mesh.blockpos.vec(),
+                counter
+            );
+            self.mapblock_meshes.insert(mesh.blockpos.vec(), mesh);
+        }
     }
 }
 
@@ -386,37 +417,10 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         let state = self.state.as_mut().unwrap();
 
-        while let Ok(mesh) = state.meshgen_rx.try_recv() {
-            let counter = state.remesh_counter.entry(mesh.blockpos.vec()).or_insert(0);
-            *counter += 1;
-
-            let prev_mesh = state.mapblock_meshes.get_mut(&mesh.blockpos.vec());
-
-            if let Some(prev_mesh) = prev_mesh {
-                // A meshgen task for the same mapblock might have started
-                // later, but finished earlier than this one.
-                // Don't replace the new data with our outdated data in that case.
-                if mesh.timestamp_task_spawned > prev_mesh.timestamp_task_spawned {
-                    println!(
-                        "Received mapblock mesh for {} [UPDATED] [#{}]",
-                        mesh.blockpos.vec(),
-                        counter,
-                    );
-                    *prev_mesh = mesh;
-                } else {
-                    println!(
-                        "Received mapblock mesh for {} [UPDATED, OBSOLETE] [#{}]",
-                        mesh.blockpos.vec(),
-                        counter,
-                    );
-                }
-            } else {
-                println!(
-                    "Received mapblock mesh for {} [NEW] [#{}]",
-                    mesh.blockpos.vec(),
-                    counter
-                );
-                state.mapblock_meshes.insert(mesh.blockpos.vec(), mesh);
+        while let Ok(event) = state.client_rx.try_recv() {
+            match event {
+                ClientToMainEvent::PlayerPos(pos) => state.camera_controller.set_pos(pos),
+                ClientToMainEvent::MapblockMesh(mesh) => state.insert_mapblock_mesh(mesh),
             }
         }
     }

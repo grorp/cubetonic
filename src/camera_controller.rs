@@ -1,14 +1,26 @@
+use glam::Vec3;
 use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::camera;
 
-pub struct CameraController {
-    rotation_sensitivity: f32,
-    movement_speed: f32,
-
+#[derive(Default, Debug, Clone)]
+pub struct PlayerPos {
+    pub pos: Vec3,
+    // Yaw is stored inverted compared to Luanti. Luanti actually inverts it when
+    // it is applied, e.g. in camera.cpp. This means we have to invert yaw values
+    // when sending to and receiving from the network, and when handling mouse
+    // input.
     pub yaw: f32,
     pub pitch: f32,
+}
+
+pub struct CameraController {
+    // The CameraController is the source of truth for this data
+    pos: PlayerPos,
+
+    rotation_sensitivity: f32,
+    movement_speed: f32,
 
     forward: bool,
     backward: bool,
@@ -22,11 +34,10 @@ pub struct CameraController {
 impl CameraController {
     pub fn new() -> CameraController {
         CameraController {
+            pos: PlayerPos::default(),
+
             rotation_sensitivity: 0.1,
             movement_speed: 20.0,
-
-            yaw: 0.0,
-            pitch: 0.0,
 
             forward: false,
             backward: false,
@@ -85,14 +96,13 @@ impl CameraController {
     pub fn process_device_event(&mut self, event: &DeviceEvent) -> bool {
         match event {
             DeviceEvent::MouseMotion { delta } => {
-                // yaw is flipped compared to how it is applied in the
-                // "event handler" by Luanti, but Luanti actually flips it
-                // later in camera.cpp
-                self.yaw += delta.0 as f32 * self.rotation_sensitivity;
-                self.pitch += delta.1 as f32 * self.rotation_sensitivity;
+                self.pos.yaw += delta.0 as f32 * self.rotation_sensitivity;
+                self.pos.pitch += delta.1 as f32 * self.rotation_sensitivity;
 
                 // don't allow the camera to flip over :)
-                self.pitch = self.pitch.clamp(-90.0, 90.0);
+                // 89 instead of 90 so the forward/up vectors don't end up being parallel
+                // (would cause flashing)
+                self.pos.pitch = self.pos.pitch.clamp(-89.0, 89.0);
 
                 true
             }
@@ -100,9 +110,17 @@ impl CameraController {
         }
     }
 
-    pub fn update_camera(&self, params: &mut camera::CameraParams, dtime: f32) {
-        let rot_yaw = glam::Quat::from_rotation_y(self.yaw.to_radians());
-        let rot_pitch = glam::Quat::from_rotation_x(self.pitch.to_radians());
+    pub fn set_pos(&mut self, pos: PlayerPos) {
+        self.pos = pos;
+    }
+
+    pub fn get_pos(&self) -> &PlayerPos {
+        &self.pos
+    }
+
+    pub fn step(&mut self, dtime: f32, params: &mut camera::CameraParams) {
+        let rot_yaw = glam::Quat::from_rotation_y(self.pos.yaw.to_radians());
+        let rot_pitch = glam::Quat::from_rotation_x(self.pos.pitch.to_radians());
 
         params.dir = rot_yaw * rot_pitch * glam::Vec3::Z;
 
@@ -133,7 +151,9 @@ impl CameraController {
         }
 
         movement = movement * self.movement_speed * dtime;
-        params.pos += movement;
+        self.pos.pos += movement;
+
+        params.pos = self.pos.pos;
 
         /*
         println!(
@@ -145,8 +165,8 @@ impl CameraController {
             params.dir.x,
             params.dir.y,
             params.dir.z,
-            self.yaw,
-            self.pitch
+            self.pos.yaw,
+            self.pos.pitch
         );
         */
         // println!("dtime: {:.4}", dtime);

@@ -18,14 +18,20 @@ use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
 use tokio::sync::mpsc;
 
+use crate::camera_controller::PlayerPos;
 use crate::map::{LuantiMap, NEIGHBOR_DIRS};
 use crate::meshgen::{MapblockMesh, MeshgenTask};
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
 
+pub enum ClientToMainEvent {
+    PlayerPos(PlayerPos),
+    MapblockMesh(MapblockMesh),
+}
+
 pub enum MainToClientEvent {
-    PlayerPos { pos: Vec3, yaw: f32, pitch: f32 },
+    PlayerPos(PlayerPos),
 }
 
 #[derive(Debug, PartialEq)]
@@ -38,8 +44,8 @@ enum ClientState {
 
 pub struct LuantiClientRunner {
     device: Arc<wgpu::Device>,
+    main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
-    meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
 
     state: ClientState,
     client: LuantiClient,
@@ -52,8 +58,8 @@ pub struct LuantiClientRunner {
 impl LuantiClientRunner {
     pub async fn spawn(
         device: Arc<wgpu::Device>,
+        main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
         main_rx: mpsc::UnboundedReceiver<MainToClientEvent>,
-        meshgen_tx: mpsc::UnboundedSender<MapblockMesh>,
     ) {
         tokio::spawn(async move {
             let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
@@ -70,8 +76,8 @@ impl LuantiClientRunner {
 
             let mut runner = LuantiClientRunner {
                 device,
+                main_tx,
                 main_rx,
-                meshgen_tx,
 
                 state: ClientState::Connected,
                 client,
@@ -126,7 +132,7 @@ impl LuantiClientRunner {
     fn generate_mapblock(&self, blockpos: MapBlockPos, block: &MapBlockNodes) {
         MeshgenTask::spawn(
             self.device.clone(),
-            self.meshgen_tx.clone(),
+            self.main_tx.clone(),
             &self.map,
             &self.meshgen_pool,
             blockpos,
@@ -230,6 +236,21 @@ impl LuantiClientRunner {
                 self.state = ClientState::ReadySent;
             }
 
+            ToClientCommand::MovePlayer(spec) => 'b: {
+                if self.state != ClientState::ReadySent {
+                    println!("Received MovePlayer, invalid for state {:?}", self.state);
+                    break 'b;
+                }
+
+                self.main_tx
+                    .send(ClientToMainEvent::PlayerPos(PlayerPos {
+                        pos: spec.pos / BS,
+                        yaw: -spec.yaw,
+                        pitch: spec.pitch,
+                    }))
+                    .unwrap();
+            }
+
             ToClientCommand::Blockdata(spec) => 'b: {
                 if self.state != ClientState::ReadySent {
                     println!("Received Blockdata, invalid for state {:?}", self.state);
@@ -265,14 +286,12 @@ impl LuantiClientRunner {
                     break 'b;
                 }
 
-                if let Some(blockpos) = self.map.set_node(
-                    &MapNodePos(spec.pos),
-                    MapNode {
-                        content_id: ContentId::AIR,
-                        param1: 0,
-                        param2: 0,
-                    },
-                ) {
+                const AIR_NODE: MapNode = MapNode {
+                    content_id: ContentId::AIR,
+                    param1: 0,
+                    param2: 0,
+                };
+                if let Some(blockpos) = self.map.set_node(&MapNodePos(spec.pos), AIR_NODE) {
                     self.generate_mapblock_with_neighbors(blockpos);
                 }
             }
@@ -285,16 +304,14 @@ impl LuantiClientRunner {
 
     fn process_main_event(&mut self, event: MainToClientEvent) -> anyhow::Result<()> {
         match event {
-            MainToClientEvent::PlayerPos { pos, yaw, pitch } => {
+            MainToClientEvent::PlayerPos (pos) => {
                 self.client
                     .send(ToServerCommand::Playerpos(Box::new(PlayerPosCommand {
                         player_pos: luanti_protocol::types::PlayerPos {
-                            position: pos * BS,
+                            position: pos.pos * BS,
                             speed: Vec3::ZERO,
-                            pitch: pitch,
-                            // stored inverted compared to Luanti, Luanti only
-                            // inverts it when applying e.g. in camera.cpp
-                            yaw: -yaw,
+                            pitch: pos.pitch,
+                            yaw: -pos.yaw,
                             keys_pressed: 0,
                             // expected to be max of horizontal and vertical fov
                             // just give a high value so we get much data
