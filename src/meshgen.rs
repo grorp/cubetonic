@@ -2,9 +2,53 @@ use std::{sync::Arc, time::Instant};
 
 use glam::{I16Vec3, Vec3};
 use luanti_core::{MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
+use tokio::sync::mpsc;
 use wgpu::util::DeviceExt;
 
-use crate::{luanti_client::ClientToMainEvent, map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS}};
+use crate::{
+    luanti_client::ClientToMainEvent,
+    map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS},
+};
+
+pub struct Meshgen {
+    device: Arc<wgpu::Device>,
+    main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
+    pool: rayon::ThreadPool,
+}
+
+/// A thread pool for generating mapblock meshes and uploading them to the GPU.
+impl Meshgen {
+    /// Creates the meshgen, setting up the thread pool.
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
+    ) -> Self {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(0)
+            .thread_name(|index| format!("Meshgen #{}", index))
+            .build()
+            .unwrap();
+
+        Self {
+            device,
+            main_tx,
+            pool,
+        }
+    }
+
+    /// Submits a mapblock for mesh generation.
+    /// The finished MapblockMesh is returned using the UnboundedSender given to Meshgen::new.
+    pub fn submit(&self, map: &LuantiMap, blockpos: MapBlockPos, block: &MapBlockNodes) {
+        MeshgenTask::spawn(
+            self.device.clone(),
+            self.main_tx.clone(),
+            &self.pool,
+            map,
+            blockpos,
+            block,
+        );
+    }
+}
 
 /// The representation of a vertex, used by the CPU-side mesh representation,
 /// and byte-serializable for uploading to GPU buffers.
@@ -31,12 +75,12 @@ impl Vertex {
 /// The CPU-side representation of a mesh. Usually dropped after uploading
 /// the data to GPU buffers.
 #[derive(Default)]
-pub struct Mesh {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
+struct Mesh {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
 }
 
-/// A finished mapblock mesh uploaded to the GPU, returned by a MeshgenTask.
+/// A finished mapblock mesh that has been uploaded to the GPU.
 pub struct MapblockMesh {
     pub blockpos: MapBlockPos,
     pub num_indices: u32,
@@ -47,22 +91,21 @@ pub struct MapblockMesh {
     pub timestamp_task_spawned: Instant,
 }
 
-/// Generates mapblock meshes and uploads them to the GPU.
-pub struct MeshgenTask {
+/// A task for generating a single mapblock mesh and uploading it to the GPU.
+struct MeshgenTask {
     device: Arc<wgpu::Device>,
-    main_tx: tokio::sync::mpsc::UnboundedSender<ClientToMainEvent>,
+    main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     data: MeshgenMapData,
     timestamp_task_spawned: Instant,
 }
 
 impl MeshgenTask {
-    /// Spawns a blocking meshgen task on the current Tokio runtime.
-    /// The finished MapblockMesh is returned using the provided UnboundedSender.
-    pub fn spawn(
+    /// Spawns the meshgen task on the thread pool.
+    fn spawn(
         device: Arc<wgpu::Device>,
-        main_tx: tokio::sync::mpsc::UnboundedSender<ClientToMainEvent>,
-        map: &LuantiMap,
+        main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
         pool: &rayon::ThreadPool,
+        map: &LuantiMap,
         blockpos: MapBlockPos,
         block: &MapBlockNodes,
     ) {

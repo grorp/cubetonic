@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use crate::camera_controller::PlayerPos;
 use crate::map::{LuantiMap, NEIGHBOR_DIRS};
-use crate::meshgen::{MapblockMesh, MeshgenTask};
+use crate::meshgen::{MapblockMesh, Meshgen};
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
@@ -51,7 +51,7 @@ pub struct LuantiClientRunner {
     state: ClientState,
     client: LuantiClient,
     map: LuantiMap,
-    meshgen_pool: rayon::ThreadPool,
+    meshgen: Meshgen,
 
     node_def: HashMap<ContentId, ContentFeatures>,
     media_paths: HashMap<String, PathBuf>,
@@ -70,11 +70,7 @@ impl LuantiClientRunner {
 
             let map = LuantiMap::new();
 
-            let meshgen_pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(0)
-                .thread_name(|index| format!("Meshgen #{}", index))
-                .build()
-                .unwrap();
+            let meshgen = Meshgen::new(device.clone(), main_tx.clone());
 
             let mut runner = LuantiClientRunner {
                 device,
@@ -84,7 +80,7 @@ impl LuantiClientRunner {
                 state: ClientState::Connected,
                 client,
                 map,
-                meshgen_pool,
+                meshgen,
 
                 node_def: HashMap::new(),
                 media_paths: HashMap::new(),
@@ -132,25 +128,15 @@ impl LuantiClientRunner {
         }
     }
 
-    fn generate_mapblock(&self, blockpos: MapBlockPos, block: &MapBlockNodes) {
-        MeshgenTask::spawn(
-            self.device.clone(),
-            self.main_tx.clone(),
-            &self.map,
-            &self.meshgen_pool,
-            blockpos,
-            block,
-        );
-    }
-
     fn generate_mapblock_with_neighbors(&self, blockpos: MapBlockPos) {
-        self.generate_mapblock(blockpos, self.map.get_block(&blockpos).unwrap());
+        self.meshgen
+            .submit(&self.map, blockpos, self.map.get_block(&blockpos).unwrap());
 
         for dir in NEIGHBOR_DIRS {
             if let Some(n_blockpos) = blockpos.checked_add(dir)
                 && let Some(n_block) = self.map.get_block(&n_blockpos)
             {
-                self.generate_mapblock(n_blockpos, n_block);
+                self.meshgen.submit(&self.map, n_blockpos, n_block);
             }
         }
     }
