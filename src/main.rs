@@ -45,7 +45,8 @@ struct State {
     client_tx: mpsc::UnboundedSender<MainToClientEvent>,
     client_rx: mpsc::UnboundedReceiver<ClientToMainEvent>,
 
-    remesh_counter: HashMap<I16Vec3, usize>,
+    remesh_counter_total: u32,
+    remesh_counter: HashMap<I16Vec3, u32>,
     mapblock_meshes: HashMap<I16Vec3, MapblockMesh>,
 }
 
@@ -161,6 +162,7 @@ impl State {
             client_tx,
             client_rx,
 
+            remesh_counter_total: 0,
             remesh_counter: HashMap::new(),
             mapblock_meshes: HashMap::new(),
         };
@@ -276,7 +278,10 @@ impl State {
             num += 1;
         }
 
-        println!("dtime: {:.4}; Meshes: {} + {} empty", dtime, num, num_empty);
+        println!(
+            "dtime: {:.4}; Meshes: {} + {} empty; total runs {}",
+            dtime, num, num_empty, self.remesh_counter_total
+        );
 
         drop(pass);
 
@@ -286,6 +291,8 @@ impl State {
     }
 
     fn insert_mapblock_mesh(&mut self, mesh: MapblockMesh) {
+        self.remesh_counter_total += 1;
+
         let counter = self.remesh_counter.entry(mesh.blockpos.vec()).or_insert(0);
         *counter += 1;
 
