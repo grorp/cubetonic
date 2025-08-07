@@ -3,43 +3,13 @@ use std::path::Path;
 use image::{GenericImageView, ImageReader};
 use wgpu::util::DeviceExt;
 
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-
-pub fn create_depth_texture(
-    device: &wgpu::Device,
-    size: winit::dpi::PhysicalSize<u32>,
-) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("depth texture"),
-        size: wgpu::Extent3d {
-            width: size.width,
-            height: size.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("depth texture view"),
-        ..wgpu::TextureViewDescriptor::default()
-    });
-
-    (texture, view)
-}
-
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
 }
 
 impl Texture {
-    pub fn new(
+    pub fn load(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         name: &str,
@@ -68,23 +38,37 @@ impl Texture {
             &img.to_rgba8(),
         );
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(name),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..wgpu::SamplerDescriptor::default()
+            ..wgpu::TextureViewDescriptor::default()
         });
 
-        Ok(Self {
-            texture,
-            view,
-            sampler,
-        })
+        Ok(Self { texture, view })
+    }
+
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    pub fn new_depth(device: &wgpu::Device, size: winit::dpi::PhysicalSize<u32>) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth texture"),
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("depth texture view"),
+            ..wgpu::TextureViewDescriptor::default()
+        });
+
+        Self { texture, view }
     }
 }

@@ -8,7 +8,7 @@ var<uniform> camera: CameraUniform;
 var textures: binding_array<texture_2d<f32>>;
 
 @group(1) @binding(1)
-var samplers: binding_array<sampler>;
+var the_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -53,7 +53,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(material_color * light, 1.0);
     */
 
-    var tex_color: vec4<f32> = textureSample(textures[in.texture_index], samplers[in.texture_index], in.uv);
+    var tex_color: vec4<f32> = textureSample(textures[in.texture_index], the_sampler, in.uv);
     // TODO: this is probably not the proper way to do this
     if (tex_color.a == 0.0) {
         discard;

@@ -15,6 +15,7 @@ use luanti_client::LuantiClientRunner;
 
 use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
 use crate::meshgen::{MapblockMesh, MapblockTextureData};
+use crate::texture::Texture;
 
 mod camera;
 mod camera_controller;
@@ -32,8 +33,7 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
     surface_format: wgpu::TextureFormat,
 
-    depth_texture: wgpu::Texture,
-    depth_texture_view: wgpu::TextureView,
+    depth_texture: Texture,
 
     camera: camera::Camera,
     camera_controller: camera_controller::CameraController,
@@ -122,7 +122,7 @@ impl State {
         );
         let camera_controller = camera_controller::CameraController::new();
 
-        let (depth_texture, depth_texture_view) = texture::create_depth_texture(&device, size);
+        let depth_texture = Texture::new_depth(&device, size);
 
         let (client_tx, main_rx) = mpsc::unbounded_channel();
         let (main_tx, client_rx) = mpsc::unbounded_channel();
@@ -138,7 +138,6 @@ impl State {
             surface_format,
 
             depth_texture,
-            depth_texture_view,
 
             camera,
             camera_controller,
@@ -184,8 +183,7 @@ impl State {
         self.size = new_size;
         self.configure_surface();
 
-        (self.depth_texture, self.depth_texture_view) =
-            texture::create_depth_texture(&self.device, new_size);
+        self.depth_texture = Texture::new_depth(&self.device, new_size);
 
         self.camera.params.size = new_size;
         // camera update will happen before rendering either way
@@ -243,7 +241,7 @@ impl State {
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.depth_texture_view,
+                view: &self.depth_texture.view,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -329,7 +327,7 @@ impl State {
                     ..wgpu::PrimitiveState::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: texture::DEPTH_FORMAT,
+                    format: Texture::DEPTH_FORMAT,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: wgpu::StencilState::default(),

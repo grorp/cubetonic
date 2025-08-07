@@ -69,7 +69,7 @@ impl Meshgen {
                     tile.name = String::from("");
                     continue;
                 };
-                let Ok(texture) = Texture::new(&device, &queue, &tile.name, &path) else {
+                let Ok(texture) = Texture::load(&device, &queue, &tile.name, &path) else {
                     println!("Failed to load texture {} from {:?}", tile.name, path);
                     tile.name = String::from("");
                     continue;
@@ -80,11 +80,20 @@ impl Meshgen {
         }
 
         let mut texture_view_vec: Vec<&wgpu::TextureView> = Vec::with_capacity(texture_vec.len());
-        let mut sampler_vec: Vec<&wgpu::Sampler> = Vec::with_capacity(texture_vec.len());
         for texture in &texture_vec {
             texture_view_vec.push(&texture.view);
-            sampler_vec.push(&texture.sampler);
         }
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Node texture sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..wgpu::SamplerDescriptor::default()
+        });
 
         // TODO: check if we are within limits (but we almost definitely are if
         // the bindless features are available)
@@ -107,7 +116,7 @@ impl Meshgen {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: Some(count),
+                    count: None,
                 },
             ],
         });
@@ -122,7 +131,7 @@ impl Meshgen {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::SamplerArray(&sampler_vec),
+                    resource: wgpu::BindingResource::Sampler(&sampler),
                 },
             ],
         });
