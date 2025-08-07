@@ -354,7 +354,8 @@ impl MeshgenTask {
 }
 
 // Compare to Luanti, content_mapblock.cpp, setupCuboidVertices
-// Note: Face order is expected to match NEIGHBOR_DIRS order
+// Note: Face order is expected to match NEIGHBOR_DIRS order,
+// and also tiledef order in luanti-protocol
 #[cfg_attr(rustfmt, rustfmt_skip)]
 const CUBE_VERTICES: &[Vertex] = &[
     // Top
