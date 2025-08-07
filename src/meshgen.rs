@@ -289,6 +289,8 @@ impl MeshgenTask {
 
     /// Generates the mapblock mesh and uploads it to GPU buffers.
     fn generate(&self) {
+        // let begin = Instant::now();
+
         let mut mesh = Mesh::default();
 
         let block = self.data.get_block();
@@ -350,6 +352,8 @@ impl MeshgenTask {
                 timestamp_task_spawned: self.timestamp_task_spawned,
             }))
             .unwrap();
+
+        // println!("Meshgen took: {}", begin.elapsed().as_millis());
     }
 }
 
