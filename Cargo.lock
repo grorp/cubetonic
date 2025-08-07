@@ -996,7 +996,7 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 [[package]]
 name = "luanti-core"
 version = "0.2.0"
-source = "git+https://github.com/kawogi/luanti-rs.git#8ce265267de913d754323e9d87b9c1e3d5e9627a"
+source = "git+https://github.com/grorp/luanti-rs.git#1ce281960abf687efa4d30251ac1426537bbcdec"
 dependencies = [
  "glam",
 ]
@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "luanti-protocol"
 version = "0.2.0"
-source = "git+https://github.com/kawogi/luanti-rs.git#8ce265267de913d754323e9d87b9c1e3d5e9627a"
+source = "git+https://github.com/grorp/luanti-rs.git#1ce281960abf687efa4d30251ac1426537bbcdec"
 dependencies = [
  "anyhow",
  "glam",
@@ -1021,7 +1021,7 @@ dependencies = [
 [[package]]
 name = "luanti-protocol-derive"
 version = "0.2.0"
-source = "git+https://github.com/kawogi/luanti-rs.git#8ce265267de913d754323e9d87b9c1e3d5e9627a"
+source = "git+https://github.com/grorp/luanti-rs.git#1ce281960abf687efa4d30251ac1426537bbcdec"
 dependencies = [
  "proc-macro2",
  "quote",

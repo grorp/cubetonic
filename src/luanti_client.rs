@@ -18,7 +18,8 @@ use tokio::sync::mpsc;
 
 use crate::camera_controller::PlayerPos;
 use crate::map::{LuantiMap, NEIGHBOR_DIRS};
-use crate::meshgen::{MapblockMesh, MapblockTextureData, MediaPathMap, Meshgen, NodeDefMap};
+use crate::meshgen::{MapblockMesh, MapblockTextureData, MediaPathMap, Meshgen};
+use crate::node_def::NodeDefManager;
 
 // Luanti's "BS" factor
 const BS: f32 = 10.0;
@@ -51,7 +52,7 @@ pub struct LuantiClientRunner {
     client: LuantiClient,
     map: LuantiMap,
 
-    node_def: Option<NodeDefMap>,
+    node_def: Option<NodeDefManager>,
     media_paths: Option<MediaPathMap>,
     meshgen: Option<Meshgen>,
 }
@@ -185,14 +186,11 @@ impl LuantiClientRunner {
                     break 'b;
                 }
 
-                let mut node_def = HashMap::new();
-
-                for (id, def) in spec.node_def.content_features {
-                    node_def.insert(ContentId(id), def);
-                }
-
-                println!("Received {} node definitions", node_def.len());
-                self.node_def = Some(node_def);
+                println!(
+                    "Received {} node definitions",
+                    spec.node_def.content_features.len()
+                );
+                self.node_def = Some(NodeDefManager::from_network(spec.node_def));
             }
 
             // TODO: check state properly

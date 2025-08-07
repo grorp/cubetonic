@@ -4,15 +4,15 @@ use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use glam::{I16Vec3, Vec2, Vec3};
 use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
-use luanti_protocol::types::{ContentFeatures, DrawType};
+use luanti_protocol::types::DrawType;
 use tokio::sync::mpsc;
 use wgpu::util::DeviceExt;
 
 use crate::luanti_client::ClientToMainEvent;
-use crate::map::{IsSolid, LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::map::{LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
+use crate::node_def::NodeDefManager;
 use crate::texture::Texture;
 
-pub type NodeDefMap = HashMap<ContentId, ContentFeatures>;
 pub type MediaPathMap = HashMap<String, PathBuf>;
 
 pub type TextureVec = Vec<Texture>;
@@ -25,7 +25,7 @@ pub struct Meshgen {
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
     pool: rayon::ThreadPool,
 
-    node_def: Arc<NodeDefMap>,
+    node_def: Arc<NodeDefManager>,
     texture_vec: TextureVec,
     texture_map: Arc<TextureMap>,
 }
@@ -37,7 +37,7 @@ impl Meshgen {
         device: wgpu::Device,
         queue: wgpu::Queue,
         main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
-        mut node_def: NodeDefMap,
+        mut node_def: NodeDefManager,
         media_paths: MediaPathMap,
     ) -> Self {
         let pool = rayon::ThreadPoolBuilder::new()
@@ -49,7 +49,7 @@ impl Meshgen {
         let mut texture_vec: TextureVec = Vec::new();
         let mut texture_map: TextureMap = HashMap::new();
 
-        for (_, def) in &mut node_def {
+        for (_, def) in &mut node_def.map {
             for tile in &mut def.tiledef {
                 if tile.name.is_empty() {
                     continue;
@@ -226,7 +226,7 @@ pub struct MapblockTextureData {
 struct MeshgenTask {
     device: wgpu::Device,
     main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
-    node_def: Arc<NodeDefMap>,
+    node_def: Arc<NodeDefManager>,
     texture_map: Arc<TextureMap>,
     data: MeshgenMapData,
     timestamp_task_spawned: Instant,
@@ -237,7 +237,7 @@ impl MeshgenTask {
     fn spawn(
         device: wgpu::Device,
         main_tx: mpsc::UnboundedSender<ClientToMainEvent>,
-        node_def: Arc<NodeDefMap>,
+        node_def: Arc<NodeDefManager>,
         texture_map: Arc<TextureMap>,
         pool: &rayon::ThreadPool,
         map: &LuantiMap,
@@ -248,7 +248,8 @@ impl MeshgenTask {
 
         let mut empty = true;
         for node in &block.0 {
-            if node.is_solid() {
+            // Quick check, not exhaustive (other nodes can have DrawType::Airlike as well).
+            if node.content_id != ContentId::AIR {
                 empty = false;
             }
         }
@@ -395,11 +396,7 @@ const QUAD_INDICES: &[u32] = &[0, 1, 2, 2, 3, 0];
 impl MeshgenTask {
     /// Generates the mesh for a single node within the mapblock.
     fn generate_single(&self, mesh: &mut Mesh, pos: I16Vec3, node: MapNode) {
-        // TODO: fallback to a "unknown node" definition
-        let Some(def) = self.node_def.get(&node.content_id) else {
-            return;
-        };
-
+        let def = self.node_def.get_with_fallback(node.content_id);
         if def.drawtype == DrawType::AirLike {
             return;
         }
@@ -411,12 +408,8 @@ impl MeshgenTask {
             // node is solid or not. The mesh will be re-generated once the neighboring
             // mapblock arrives.
             if let Some(n_node) = self.data.get_node(MapNodePos(n_pos))
-                // TODO: air has no nodedef yet, thus this
-                && self
-                    .node_def
-                    .get(&n_node.content_id)
-                    .and_then(|def| Some(def.drawtype != DrawType::Normal))
-                    .unwrap_or(true)
+                && let n_def = self.node_def.get_with_fallback(n_node.content_id)
+                && n_def.drawtype != DrawType::Normal
             {
                 let texture_name = &def.tiledef[face_index].name;
                 // TODO: get a proper fallback texture

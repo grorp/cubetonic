@@ -23,6 +23,7 @@ mod luanti_client;
 mod map;
 mod meshgen;
 mod texture;
+mod node_def;
 
 struct State {
     window: Arc<Window>,

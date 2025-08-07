@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use glam::I16Vec3;
-use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
+use luanti_core::{MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 
 /// A Luanti map. Consists of "mapblocks", which are 16³ chunks of "nodes".
 pub struct LuantiMap {
@@ -118,15 +118,5 @@ impl MeshgenMapData {
         };
 
         None
-    }
-}
-
-pub trait IsSolid {
-    fn is_solid(&self) -> bool;
-}
-
-impl IsSolid for MapNode {
-    fn is_solid(&self) -> bool {
-        self.content_id != ContentId::IGNORE && self.content_id != ContentId::AIR
     }
 }
