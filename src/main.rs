@@ -22,8 +22,8 @@ mod camera_controller;
 mod luanti_client;
 mod map;
 mod meshgen;
-mod texture;
 mod node_def;
+mod texture;
 
 struct State {
     window: Arc<Window>,
@@ -166,7 +166,7 @@ impl State {
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: self.surface_format,
-                view_formats: vec![],
+                view_formats: vec![self.surface_format.add_srgb_suffix()],
                 width: self.size.width,
                 height: self.size.height,
                 present_mode: wgpu::PresentMode::AutoVsync,
@@ -218,9 +218,11 @@ impl State {
         }
         let output = output.unwrap();
 
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Surface texture view"),
+            format: Some(self.surface_format.add_srgb_suffix()),
+            ..wgpu::TextureViewDescriptor::default()
+        });
 
         let mut encoder = self
             .device
