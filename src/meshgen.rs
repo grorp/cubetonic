@@ -79,10 +79,8 @@ impl Meshgen {
             }
         }
 
-        let mut texture_view_vec: Vec<&wgpu::TextureView> = Vec::with_capacity(texture_vec.len());
-        for texture in &texture_vec {
-            texture_view_vec.push(&texture.view);
-        }
+        let texture_view_vec: Vec<&wgpu::TextureView> =
+            texture_vec.iter().map(|texture| &texture.view).collect();
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Node texture sampler"),
