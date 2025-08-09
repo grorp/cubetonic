@@ -51,11 +51,11 @@ impl Meshgen {
                         if exists {
                             continue;
                         } else {
-                            println!("Missing texture {} for node {}", tile.name, def.name);
+                            println!("Missing texture \"{}\" for node \"{}\"", tile.name, def.name);
                         }
                     }
                     Err(err) => {
-                        println!("Error while loading texture {}: {:?}", tile.name, err);
+                        println!("Error while loading texture \"{}\": {:?}", tile.name, err);
                     }
                 }
 

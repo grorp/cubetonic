@@ -76,7 +76,7 @@ pub struct NodeTextureData {
     pub bind_group: wgpu::BindGroup,
 }
 
-/// A node texture manager using bindless textures (yay!)
+/// A node texture manager using "bindless" textures (yay!)
 pub struct NodeTextureManager {
     texture_vec: Vec<MyTexture>,
     // contains indices into texture_vec

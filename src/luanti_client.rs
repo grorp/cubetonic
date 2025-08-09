@@ -204,11 +204,11 @@ impl LuantiClientRunner {
                         Ok(found) => {
                             if !found {
                                 // TODO: download missing media
-                                println!("Missing media file in cache: {}", item.name);
+                                println!("Missing media file in cache: \"{}\"", item.name);
                             }
                         }
                         Err(err) => {
-                            println!("Error while adding media file {} from cache: {:?}", item.name, err);
+                            println!("Error while adding media file \"{}\" from cache: {:?}", item.name, err);
                         }
                     }
                 }
