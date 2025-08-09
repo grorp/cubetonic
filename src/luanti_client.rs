@@ -7,7 +7,7 @@ use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use luanti_protocol::LuantiClient;
 use luanti_protocol::commands::client_to_server::{
     ClientReadySpec, FirstSrpSpec, GotBlocksSpec, Init2Spec, InitSpec, PlayerPosCommand,
-    ToServerCommand,
+    RequestMediaSpec, ToServerCommand,
 };
 use luanti_protocol::commands::server_to_client::ToClientCommand;
 use rand::Rng;
@@ -37,6 +37,7 @@ enum ClientState {
     Connected,
     AuthSent,
     Init2Sent,
+    RequestMediaSent,
     ReadySent,
 }
 
@@ -198,42 +199,64 @@ impl LuantiClientRunner {
                     break 'b;
                 }
 
-                let mut media = MediaManager::new();
+                let mut media = MediaManager::new()?;
+                let mut missing = Vec::new();
+                let mut num_found: u32 = 0;
                 for item in spec.files {
                     match media.try_add_from_cache(&item.name, &item.sha1_base64) {
                         Ok(found) => {
                             if !found {
-                                // TODO: download missing media
-                                println!("Missing media file in cache: \"{}\"", item.name);
+                                missing.push(item.name);
+                            } else {
+                                num_found += 1;
                             }
                         }
                         Err(err) => {
-                            println!("Error while adding media file \"{}\" from cache: {:?}", item.name, err);
+                            println!(
+                                "Error while adding media file \"{}\" from cache: {:?}",
+                                item.name, err
+                            );
                         }
                     }
                 }
                 self.media = Some(media);
 
-                // TODO: properly check whether loading is finished before updating state
+                println!(
+                    "Found {} media files in cache, requesting {} missing files",
+                    num_found,
+                    missing.len()
+                );
+                if missing.len() > 0 {
+                    // TODO: try HTTP(S) / remote media servers first
+                    self.client.send(ToServerCommand::RequestMedia(Box::new(
+                        RequestMediaSpec { files: missing },
+                    )))?;
+                    self.state = ClientState::RequestMediaSent;
+                } else {
+                    // TODO: properly check whether loading is finished before updating state
+                    self.send_ready()?;
+                }
+            }
 
-                self.meshgen = Some(Meshgen::new(
-                    self.device.clone(),
-                    self.queue.clone(),
-                    self.main_tx.clone(),
-                    self.node_def.take().unwrap(),
-                    self.media.take().unwrap(),
-                ));
+            ToClientCommand::Media(spec) => 'b: {
+                if self.state != ClientState::RequestMediaSent {
+                    println!("Received Media, invalid for state {:?}", self.state);
+                    break 'b;
+                }
 
-                self.client
-                    .send(ToServerCommand::ClientReady(Box::new(ClientReadySpec {
-                        major_ver: 0,
-                        minor_ver: 1,
-                        patch_ver: 0,
-                        reserved: 0,
-                        full_ver: String::from("Cubetonic 0.1.0"),
-                        formspec_ver: Some(8), // corresponds to proto ver 46
-                    })))?;
-                self.state = ClientState::ReadySent;
+                for file in &spec.files {
+                    self.media
+                        .as_mut()
+                        .unwrap()
+                        .add_from_bytes(&file.name, &file.data)?;
+                }
+                println!("Received {} media files from the server", spec.files.len());
+
+                if spec.bunch_index == spec.num_bunches - 1 {
+                    // TODO: properly check the missing files are now loaded
+                    // TODO: properly check whether loading is finished before updating state
+                    self.send_ready()?;
+                }
             }
 
             ToClientCommand::MovePlayer(spec) => 'b: {
@@ -299,6 +322,30 @@ impl LuantiClientRunner {
             _ => (),
         }
 
+        Ok(())
+    }
+
+    fn send_ready(&mut self) -> anyhow::Result<()> {
+        self.meshgen = Some(Meshgen::new(
+            self.device.clone(),
+            self.queue.clone(),
+            self.main_tx.clone(),
+            self.node_def.take().unwrap(),
+            self.media.take().unwrap(),
+        ));
+
+        self.client
+            .send(ToServerCommand::ClientReady(Box::new(ClientReadySpec {
+                major_ver: 0,
+                minor_ver: 1,
+                patch_ver: 0,
+                reserved: 0,
+                full_ver: String::from("Cubetonic 0.1.0"),
+                formspec_ver: Some(8), // corresponds to proto ver 46
+            })))?;
+        self.state = ClientState::ReadySent;
+
+        println!("Client is ready!");
         Ok(())
     }
 

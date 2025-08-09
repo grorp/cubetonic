@@ -1,6 +1,7 @@
-use std::{collections::HashMap, num::NonZero, path::PathBuf};
+use std::{collections::HashMap, fs, num::NonZero, path::PathBuf};
 
 use base64::{Engine as _, engine::DecodePaddingMode};
+use sha1::{Digest as _, Sha1};
 
 use crate::texture::MyTexture;
 
@@ -9,6 +10,8 @@ pub enum MediaSource {
     Bytes(&'static [u8]),
 }
 
+/// A media manager. Media is identified by file name. To use a file, it must be
+/// "added" to the media manager first. Then it can be "gotten" by file name.
 pub struct MediaManager {
     base64: base64::engine::GeneralPurpose,
     cache_dir: PathBuf,
@@ -16,13 +19,11 @@ pub struct MediaManager {
     map: HashMap<String, MediaSource>,
 }
 
-/// A media manager. Media is identified by file name. To use a file, it must be
-/// "added" to the media manager first. Then it can be "gotten" by file name.
 impl MediaManager {
     /// A fallback texture that is guaranteed to always be available.
     pub const FALLBACK_TEXTURE: &str = "no_texture.png";
 
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         let base64 = base64::engine::GeneralPurpose::new(
             &base64::alphabet::STANDARD,
             base64::engine::GeneralPurposeConfig::new()
@@ -32,6 +33,7 @@ impl MediaManager {
 
         let mut cache_dir = std::env::home_dir().unwrap();
         cache_dir.push(".minetest/cache/media");
+        fs::create_dir_all(&cache_dir)?;
 
         let mut map = HashMap::new();
         map.insert(
@@ -39,11 +41,11 @@ impl MediaManager {
             MediaSource::Bytes(include_bytes!("no_texture.png")),
         );
 
-        Self {
+        Ok(Self {
             base64,
             cache_dir,
             map,
-        }
+        })
     }
 
     /// Tries to find a file with the given sha1 in the existing Luanti media
@@ -62,6 +64,23 @@ impl MediaManager {
             self.map.insert(String::from(name), MediaSource::Path(path));
         }
         Ok(exists)
+    }
+
+    /// Adds the given file to the media manager, and to the Luanti media cache.
+    /// Returns Ok(()) on success.
+    /// Returns Err(err) for IO errors.
+    pub fn add_from_bytes(&mut self, name: &str, data: &[u8]) -> anyhow::Result<()> {
+        // TODO: check the file is in the missing list (was announced, was not
+        // found in cache, hash matches announced hash)
+        let mut hasher = Sha1::new();
+        hasher.update(data);
+        let sha1_raw = hasher.finalize();
+        let sha1_hex = hex::encode(sha1_raw);
+
+        let path = self.cache_dir.join(sha1_hex);
+        fs::write(&path, data)?;
+        self.map.insert(String::from(name), MediaSource::Path(path));
+        Ok(())
     }
 
     /// Gets a file from the media manager.
