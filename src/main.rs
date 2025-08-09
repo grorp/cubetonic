@@ -14,8 +14,9 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 use luanti_client::LuantiClientRunner;
 
 use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
-use crate::meshgen::{MapblockMesh, MapblockTextureData};
-use crate::texture::Texture;
+use crate::media::NodeTextureData;
+use crate::meshgen::{MapblockMesh};
+use crate::texture::MyTexture;
 
 mod camera;
 mod camera_controller;
@@ -24,6 +25,7 @@ mod map;
 mod meshgen;
 mod node_def;
 mod texture;
+mod media;
 
 struct State {
     window: Arc<Window>,
@@ -34,7 +36,7 @@ struct State {
     size: winit::dpi::PhysicalSize<u32>,
     surface_format: wgpu::TextureFormat,
 
-    depth_texture: Texture,
+    depth_texture: MyTexture,
 
     camera: camera::Camera,
     camera_controller: camera_controller::CameraController,
@@ -45,7 +47,7 @@ struct State {
     client_tx: mpsc::UnboundedSender<MainToClientEvent>,
     client_rx: mpsc::UnboundedReceiver<ClientToMainEvent>,
 
-    mapblock_texture_data: Option<MapblockTextureData>,
+    mapblock_texture_data: Option<NodeTextureData>,
     render_pipeline: Option<wgpu::RenderPipeline>,
 
     remesh_counter_total: u32,
@@ -123,7 +125,7 @@ impl State {
         );
         let camera_controller = camera_controller::CameraController::new();
 
-        let depth_texture = Texture::new_depth(&device, size);
+        let depth_texture = MyTexture::new_depth(&device, size);
 
         let (client_tx, main_rx) = mpsc::unbounded_channel();
         let (main_tx, client_rx) = mpsc::unbounded_channel();
@@ -184,7 +186,7 @@ impl State {
         self.size = new_size;
         self.configure_surface();
 
-        self.depth_texture = Texture::new_depth(&self.device, new_size);
+        self.depth_texture = MyTexture::new_depth(&self.device, new_size);
 
         self.camera.params.size = new_size;
         // camera update will happen before rendering either way
@@ -294,7 +296,7 @@ impl State {
         output.present();
     }
 
-    fn setup_mapblock_rendering(&mut self, data: MapblockTextureData) {
+    fn setup_mapblock_rendering(&mut self, data: NodeTextureData) {
         assert!(self.mapblock_texture_data.is_none());
         assert!(self.render_pipeline.is_none());
 
@@ -330,7 +332,7 @@ impl State {
                     ..wgpu::PrimitiveState::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: Texture::DEPTH_FORMAT,
+                    format: MyTexture::DEPTH_FORMAT,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Less,
                     stencil: wgpu::StencilState::default(),

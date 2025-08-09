@@ -3,19 +3,38 @@ use std::path::Path;
 use image::{GenericImageView, ImageReader};
 use wgpu::util::DeviceExt;
 
-pub struct Texture {
+pub struct MyTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
 }
 
-impl Texture {
-    pub fn load(
+impl MyTexture {
+    pub fn from_bytes(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        bytes: &[u8],
+    ) -> anyhow::Result<Self> {
+        let img = image::load_from_memory(bytes)?;
+        Self::from_image(device, queue, name, &img)
+    }
+
+    pub fn from_path(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         name: &str,
         path: &Path,
     ) -> anyhow::Result<Self> {
         let img = ImageReader::open(path)?.with_guessed_format()?.decode()?;
+        Self::from_image(device, queue, name, &img)
+    }
+
+    pub fn from_image(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        name: &str,
+        img: &image::DynamicImage,
+    ) -> anyhow::Result<Self> {
         let dimensions = img.dimensions();
 
         let texture = device.create_texture_with_data(

@@ -1,10 +1,7 @@
-use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
-use base64::Engine;
-use base64::engine::DecodePaddingMode;
 use glam::Vec3;
 use luanti_core::{ContentId, MapBlockNodes, MapBlockPos, MapNode, MapNodePos};
 use luanti_protocol::LuantiClient;
@@ -18,7 +15,8 @@ use tokio::sync::mpsc;
 
 use crate::camera_controller::PlayerPos;
 use crate::map::{LuantiMap, NEIGHBOR_DIRS};
-use crate::meshgen::{MapblockMesh, MapblockTextureData, MediaPathMap, Meshgen};
+use crate::media::{MediaManager, NodeTextureData};
+use crate::meshgen::{MapblockMesh, Meshgen};
 use crate::node_def::NodeDefManager;
 
 // Luanti's "BS" factor
@@ -26,7 +24,7 @@ const BS: f32 = 10.0;
 
 pub enum ClientToMainEvent {
     PlayerPos(PlayerPos),
-    MapblockTextureData(MapblockTextureData),
+    MapblockTextureData(NodeTextureData),
     MapblockMesh(MapblockMesh),
 }
 
@@ -53,7 +51,7 @@ pub struct LuantiClientRunner {
     map: LuantiMap,
 
     node_def: Option<NodeDefManager>,
-    media_paths: Option<MediaPathMap>,
+    media: Option<MediaManager>,
     meshgen: Option<Meshgen>,
 }
 
@@ -82,7 +80,7 @@ impl LuantiClientRunner {
                 map,
 
                 node_def: None,
-                media_paths: None,
+                media: None,
                 meshgen: None,
             };
             runner.run().await
@@ -195,42 +193,26 @@ impl LuantiClientRunner {
 
             // TODO: check state properly
             ToClientCommand::AnnounceMedia(spec) => 'b: {
-                if self.state != ClientState::Init2Sent || self.media_paths.is_some() {
+                if self.state != ClientState::Init2Sent || self.media.is_some() {
                     println!("Received AnnounceMedia, invalid for state {:?}", self.state);
                     break 'b;
                 }
 
-                let mut media_paths = HashMap::new();
-
-                let mut cache_path = std::env::home_dir().unwrap();
-                cache_path.push(".minetest/cache/media");
-
-                let base64 = base64::engine::GeneralPurpose::new(
-                    &base64::alphabet::STANDARD,
-                    base64::engine::GeneralPurposeConfig::new()
-                        // Luanti encodes without padding (currently)
-                        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
-                );
-
+                let mut media = MediaManager::new();
                 for item in spec.files {
-                    // The encoding choices made here are very curious
-                    let Ok(sha1_raw) = base64.decode(&item.sha1_base64) else {
-                        println!("Invalid base64 {} for {}", item.sha1_base64, item.name);
-                        continue;
-                    };
-                    let sha1_hex = hex::encode(sha1_raw);
-
-                    let path = cache_path.join(sha1_hex);
-                    if path.exists() {
-                        media_paths.insert(item.name, path);
-                    } else {
-                        // TODO: download missing media
-                        println!("Missing media file in cache: {} / {:?}", item.name, path);
+                    match media.try_add_from_cache(&item.name, &item.sha1_base64) {
+                        Ok(found) => {
+                            if !found {
+                                // TODO: download missing media
+                                println!("Missing media file in cache: {}", item.name);
+                            }
+                        }
+                        Err(err) => {
+                            println!("Error while adding media file {} from cache: {:?}", item.name, err);
+                        }
                     }
                 }
-
-                println!("Found {} media files in cache", media_paths.len());
-                self.media_paths = Some(media_paths);
+                self.media = Some(media);
 
                 // TODO: properly check whether loading is finished before updating state
 
@@ -239,7 +221,7 @@ impl LuantiClientRunner {
                     self.queue.clone(),
                     self.main_tx.clone(),
                     self.node_def.take().unwrap(),
-                    self.media_paths.take().unwrap(),
+                    self.media.take().unwrap(),
                 ));
 
                 self.client
