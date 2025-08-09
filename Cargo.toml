@@ -23,3 +23,7 @@ winit = "0.30.11"
 [profile.profiling]
 inherits = "release"
 debug = true
+
+# [patch."https://github.com/grorp/luanti-rs.git"]
+# luanti-core = { path = "../luanti-rs/luanti-core" }
+# luanti-protocol = { path = "../luanti-rs/luanti-protocol" }
