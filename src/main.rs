@@ -15,17 +15,17 @@ use luanti_client::LuantiClientRunner;
 
 use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
 use crate::media::NodeTextureData;
-use crate::meshgen::{MapblockMesh};
+use crate::meshgen::MapblockMesh;
 use crate::texture::MyTexture;
 
 mod camera;
 mod camera_controller;
 mod luanti_client;
 mod map;
+mod media;
 mod meshgen;
 mod node_def;
 mod texture;
-mod media;
 
 struct State {
     window: Arc<Window>,
@@ -73,30 +73,22 @@ impl State {
         let avail_features = adapter.features().features_wgpu;
         let avail_limits = adapter.limits();
 
-        let mut bindless_features = FeaturesWGPU::TEXTURE_BINDING_ARRAY
-            | FeaturesWGPU::PARTIALLY_BOUND_BINDING_ARRAY
+        let bindless_features = FeaturesWGPU::TEXTURE_BINDING_ARRAY
             | FeaturesWGPU::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
-        let mut limits = wgpu::Limits::defaults();
-
-        if avail_features.contains(bindless_features) {
-            let max_other = avail_limits.max_binding_array_elements_per_shader_stage;
-            let max_samplers = avail_limits.max_binding_array_sampler_elements_per_shader_stage;
-            limits.max_binding_array_elements_per_shader_stage = max_other;
-            limits.max_binding_array_sampler_elements_per_shader_stage = max_samplers;
-
-            println!(
-                "wgpu features for bindless textures are available. \
-                max_binding_array_elements_per_shader_stage: {}, \
-                max_binding_array_sampler_elements_per_shader_stage: {}",
-                max_other, max_samplers
-            );
-        } else {
-            println!(
+        if !avail_features.contains(bindless_features) {
+            panic!(
                 "Missing wgpu features for bindless textures: {:?}",
                 bindless_features.difference(avail_features)
             );
-            bindless_features = FeaturesWGPU::empty();
         }
+
+        let mut limits = wgpu::Limits::defaults();
+        let the_limit = avail_limits.max_binding_array_elements_per_shader_stage;
+        limits.max_binding_array_elements_per_shader_stage = the_limit;
+        println!(
+            "max_binding_array_elements_per_shader_stage = {}",
+            the_limit
+        );
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
