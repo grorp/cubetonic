@@ -51,7 +51,10 @@ impl Meshgen {
                         if exists {
                             continue;
                         } else {
-                            println!("Missing texture \"{}\" for node \"{}\"", tile.name, def.name);
+                            println!(
+                                "Missing texture \"{}\" for node \"{}\"",
+                                tile.name, def.name
+                            );
                         }
                     }
                     Err(err) => {
@@ -132,6 +135,11 @@ struct Mesh {
     indices: Vec<u32>,
 }
 
+pub struct BoundingSphere {
+    pub center: Vec3,
+    pub radius: f32,
+}
+
 /// A finished mapblock mesh that has been uploaded to the GPU.
 pub struct MapblockMesh {
     pub blockpos: MapBlockPos,
@@ -140,6 +148,8 @@ pub struct MapblockMesh {
     pub index_buffer: Option<wgpu::Buffer>,
     /// None if num_indices == 0
     pub vertex_buffer: Option<wgpu::Buffer>,
+    /// None if num_indices == 0
+    pub bounding_sphere: Option<BoundingSphere>,
     pub timestamp_task_spawned: Instant,
 }
 
@@ -186,6 +196,7 @@ impl MeshgenTask {
                     num_indices: 0,
                     index_buffer: None,
                     vertex_buffer: None,
+                    bounding_sphere: None,
                     timestamp_task_spawned: t,
                 }))
                 .unwrap();
@@ -242,6 +253,7 @@ impl MeshgenTask {
                     num_indices: 0,
                     index_buffer: None,
                     vertex_buffer: None,
+                    bounding_sphere: None,
                     timestamp_task_spawned: self.timestamp_task_spawned,
                 }))
                 .unwrap();
@@ -264,12 +276,19 @@ impl MeshgenTask {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
+        let bounding_sphere = BoundingSphere {
+            center: (self.data.get_blockpos().vec().as_vec3() + Vec3::splat(0.5))
+                * MapBlockPos::SIZE as f32,
+            radius: ((3 * MapBlockPos::SIZE.pow(2)) as f32).sqrt(),
+        };
+
         self.main_tx
             .send(ClientToMainEvent::MapblockMesh(MapblockMesh {
                 blockpos: self.data.get_blockpos(),
                 num_indices: mesh.indices.len() as u32,
                 index_buffer: Some(index_buffer),
                 vertex_buffer: Some(vertex_buffer),
+                bounding_sphere: Some(bounding_sphere),
                 timestamp_task_spawned: self.timestamp_task_spawned,
             }))
             .unwrap();

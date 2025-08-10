@@ -261,29 +261,33 @@ impl State {
             pass.set_bind_group(0, self.camera.bind_group(), &[]);
             pass.set_bind_group(1, &mapblock_texture_data.bind_group, &[]);
 
-            // let mut num: u32 = 0;
-            // let mut num_empty: u32 = 0;
+            let mut drawlist = Vec::new();
 
-            for (_, mesh) in self.mapblock_meshes.iter() {
+            let camera_pos = self.camera.params.pos;
+
+            for (_, mesh) in &self.mapblock_meshes {
                 if mesh.num_indices == 0 {
-                    // num_empty += 1;
                     continue;
                 }
-                pass.set_index_buffer(
-                    mesh.index_buffer.as_ref().unwrap().slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                pass.set_vertex_buffer(0, mesh.vertex_buffer.as_ref().unwrap().slice(..));
-                pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
-                // num += 1;
+
+                let sphere = mesh.bounding_sphere.as_ref().unwrap();
+                let distance_sq = camera_pos.distance_squared(sphere.center);
+                let max_distance = Self::VIEW_DISTANCE + sphere.radius;
+                if distance_sq > max_distance * max_distance {
+                    continue;
+                }
+
+                drawlist.push(mesh);
             }
 
-            /*
-            println!(
-                "dtime: {:.4}; Meshes: {} + {} empty; total runs {}",
-                dtime, num, num_empty, self.remesh_counter_total
-            );
-            */
+            for mesh in drawlist {
+                let index_buffer = mesh.index_buffer.as_ref().unwrap();
+                let vertex_buffer = mesh.vertex_buffer.as_ref().unwrap();
+
+                pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
+            }
         }
 
         drop(pass);
