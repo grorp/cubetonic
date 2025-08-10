@@ -348,31 +348,40 @@ impl MeshgenTask {
             // Faces to non-existent mapblocks are not generated, as we don't know if the
             // node is solid or not. The mesh will be re-generated once the neighboring
             // mapblock arrives.
-            if let Some(n_node) = self.data.get_node(MapNodePos(n_pos))
-                && let n_def = self.node_def.get_with_fallback(n_node.content_id)
-                && n_def.drawtype != DrawType::Normal
+            let Some(n_node) = self.data.get_node(MapNodePos(n_pos)) else {
+                continue;
+            };
+            // Some funny heuristics for now
+            if n_node.content_id == node.content_id
+                && (def.drawtype == DrawType::Liquid || def.drawtype == DrawType::FlowingLiquid)
             {
-                let texture_name = &def.tiledef[face_index].name;
-                let texture_index = self.textures.get_texture_index(&texture_name).unwrap() as u32;
-
-                let index_offset = mesh.vertices.len() as u32;
-                let vertex_offset =
-                    MapNodePos::from(self.data.get_blockpos()).0.as_vec3() + pos.as_vec3();
-
-                let from_vertex = face_index * 4;
-                let to_vertex = from_vertex + 4;
-                let vertices = CUBE_VERTICES[from_vertex..to_vertex]
-                    .iter()
-                    .map(|vertex| Vertex {
-                        position: vertex_offset + vertex.position,
-                        texture_index,
-                        ..*vertex
-                    });
-                mesh.vertices.extend(vertices);
-
-                let indices = QUAD_INDICES.iter().map(|index| index_offset + index);
-                mesh.indices.extend(indices);
+                continue;
             }
+            let n_def = self.node_def.get_with_fallback(n_node.content_id);
+            if n_def.drawtype == DrawType::Normal {
+                continue;
+            }
+
+            let texture_name = &def.tiledef[face_index].name;
+            let texture_index = self.textures.get_texture_index(&texture_name).unwrap() as u32;
+
+            let index_offset = mesh.vertices.len() as u32;
+            let vertex_offset =
+                MapNodePos::from(self.data.get_blockpos()).0.as_vec3() + pos.as_vec3();
+
+            let from_vertex = face_index * 4;
+            let to_vertex = from_vertex + 4;
+            let vertices = CUBE_VERTICES[from_vertex..to_vertex]
+                .iter()
+                .map(|vertex| Vertex {
+                    position: vertex_offset + vertex.position,
+                    texture_index,
+                    ..*vertex
+                });
+            mesh.vertices.extend(vertices);
+
+            let indices = QUAD_INDICES.iter().map(|index| index_offset + index);
+            mesh.indices.extend(indices);
         }
     }
 }
