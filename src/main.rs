@@ -56,6 +56,9 @@ struct State {
 }
 
 impl State {
+    const BG_COLOR: Vec3 = Vec3::new(140.0 / 255.0, 186.0 / 255.0, 250.0 / 255.0);
+    const VIEW_DISTANCE: f32 = 200.0;
+
     async fn new(window: Arc<Window>) -> State {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 
@@ -113,6 +116,8 @@ impl State {
                 pos: Vec3::ZERO,
                 dir: Vec3::ZERO,
                 size,
+                fog_color: Self::BG_COLOR,
+                view_distance: Self::VIEW_DISTANCE,
             },
         );
         let camera_controller = camera_controller::CameraController::new();
@@ -229,9 +234,9 @@ impl State {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 140.0 / 255.0,
-                        g: 186.0 / 255.0,
-                        b: 250.0 / 255.0,
+                        r: Self::BG_COLOR.x as f64,
+                        g: Self::BG_COLOR.y as f64,
+                        b: Self::BG_COLOR.z as f64,
                         a: 1.0,
                     }),
                     store: wgpu::StoreOp::Store,

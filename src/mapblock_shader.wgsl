@@ -1,5 +1,10 @@
 struct CameraUniform {
+    view: mat4x4<f32>,
     view_proj: mat4x4<f32>,
+    // order of the following two is intentional to avoid needing additional
+    // alignment
+    fog_color: vec3<f32>,
+    view_distance: f32,
 }
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
@@ -23,6 +28,7 @@ struct VertexOutput {
     @location(1) uv: vec2<f32>,
     @location(2) normal: vec3<f32>,
     @location(3) texture_index: u32,
+    @location(4) view_position: vec3<f32>,
 }
 
 @vertex
@@ -35,6 +41,7 @@ fn vs_main(
     out.uv = model.uv;
     out.normal = model.normal;
     out.texture_index = model.texture_index;
+    out.view_position = (camera.view * vec4<f32>(model.position, 1.0)).xyz;
     return out;
 }
 
@@ -55,23 +62,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var tex_color: vec4<f32> = textureSample(textures[in.texture_index], the_sampler, in.uv);
     // TODO: this is probably not the proper way to do this
-    if (tex_color.a == 0.0) {
+    if tex_color.a == 0.0 {
         discard;
     }
 
     var color: vec3<f32> = tex_color.rgb;
 
-    if (abs(in.normal.x) > 0.001) {
+    if abs(in.normal.x) > 0.001 {
         // +x or -x
         color *= 0.6;
-    } else if (abs(in.normal.z) > 0.001) {
+    } else if abs(in.normal.z) > 0.001 {
         // +z or -z
         color *= 0.8;
-    } else if (in.normal.y < -0.001) {
+    } else if in.normal.y < -0.001 {
         // -y
-        color *= 0.2; 
+        color *= 0.2;
     }
     // +y = 1.0
+
+    let fog_color = camera.fog_color;
+    let fog_end = camera.view_distance;
+    let fog_start = fog_end * 0.8;
+
+    let distance = length(in.view_position);
+    let factor = smoothstep(fog_start, fog_end, distance);
+    color = mix(color, fog_color, factor);
 
     return vec4<f32>(color, 1.0);
 }
