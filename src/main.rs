@@ -56,7 +56,7 @@ struct State {
 }
 
 impl State {
-    const BG_COLOR: Vec3 = Vec3::new(140.0 / 255.0, 186.0 / 255.0, 250.0 / 255.0);
+    const BG_COLOR: Vec3 = Vec3::new(0.262250658, 0.491020850, 0.955973353);
     const VIEW_DISTANCE: f32 = 200.0;
 
     async fn new(window: Arc<Window>) -> State {
