@@ -56,6 +56,9 @@ struct State {
     remesh_counter_total: u32,
     remesh_counter: HashMap<I16Vec3, u32>,
     mapblock_meshes: HashMap<I16Vec3, MapblockMesh>,
+
+    frustum: Frustum,
+    frustum_frozen: bool,
 }
 
 impl State {
@@ -133,6 +136,8 @@ impl State {
         let (main_tx, client_rx) = mpsc::unbounded_channel();
         LuantiClientRunner::spawn(device.clone(), queue.clone(), main_tx, main_rx).await;
 
+        let frustum = Frustum::new(&camera.params);
+
         let state = State {
             window,
             device,
@@ -159,6 +164,9 @@ impl State {
             remesh_counter_total: 0,
             remesh_counter: HashMap::new(),
             mapblock_meshes: HashMap::new(),
+
+            frustum,
+            frustum_frozen: false,
         };
         state.configure_surface();
         state
@@ -266,7 +274,9 @@ impl State {
             pass.set_bind_group(0, self.camera.bind_group(), &[]);
             pass.set_bind_group(1, &mapblock_texture_data.bind_group, &[]);
 
-            let frustum = Frustum::new(&self.camera.params);
+            if !self.frustum_frozen {
+                self.frustum = Frustum::new(&self.camera.params);
+            }
             let mut drawlist = Vec::new();
 
             let mut culled: u32 = 0;
@@ -277,7 +287,7 @@ impl State {
                     continue;
                 }
                 let bounding_sphere = mesh.bounding_sphere.as_ref().unwrap();
-                if !bounding_sphere.is_on_frustum(&frustum) {
+                if !bounding_sphere.is_on_frustum(&self.frustum) {
                     culled += 1;
                     continue;
                 }
@@ -488,6 +498,11 @@ impl ApplicationHandler for App {
                             } else {
                                 None
                             })
+                    }
+                }
+                KeyCode::KeyF => {
+                    if key_state == ElementState::Pressed {
+                        state.frustum_frozen = !state.frustum_frozen;
                     }
                 }
                 _ => (),
