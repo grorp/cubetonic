@@ -37,7 +37,7 @@ pub struct Frustum {
 
 impl Frustum {
     pub fn new(params: &CameraParams) -> Self {
-        let right = params.dir.cross(Vec3::Y).normalize();
+        let right = params.dir.cross(CameraParams::WORLD_UP).normalize();
         let up = right.cross(params.dir).normalize();
 
         let half_v_side = params.z_far * (params.fov_y * 0.5).tan();

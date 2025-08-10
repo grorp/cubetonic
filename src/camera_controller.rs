@@ -2,7 +2,7 @@ use glam::Vec3;
 use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::camera;
+use crate::camera::CameraParams;
 
 #[derive(Default, Debug, Clone)]
 pub struct PlayerPos {
@@ -118,11 +118,11 @@ impl CameraController {
         &self.pos
     }
 
-    pub fn step(&mut self, dtime: f32, params: &mut camera::CameraParams) {
+    pub fn step(&mut self, dtime: f32, params: &mut CameraParams) {
         let rot_yaw = glam::Quat::from_rotation_y(self.pos.yaw.to_radians());
         let rot_pitch = glam::Quat::from_rotation_x(self.pos.pitch.to_radians());
 
-        params.dir = rot_yaw * rot_pitch * glam::Vec3::Z;
+        params.dir = rot_yaw * rot_pitch * CameraParams::WORLD_FORWARD;
 
         let mut movement = glam::Vec3::ZERO;
 

@@ -12,8 +12,12 @@ pub struct CameraParams {
 }
 
 impl CameraParams {
+    pub const WORLD_UP: glam::Vec3 = glam::Vec3::Y;
+    pub const WORLD_FORWARD: glam::Vec3 = glam::Vec3::Z;
+
     fn build_view_matrix(&self) -> glam::Mat4 {
-        glam::Mat4::look_to_lh(self.pos, self.dir, glam::Vec3::Y)
+        // TODO: proper up vector
+        glam::Mat4::look_to_lh(self.pos, self.dir, Self::WORLD_UP)
     }
 
     fn build_view_proj_matrix(&self) -> glam::Mat4 {
