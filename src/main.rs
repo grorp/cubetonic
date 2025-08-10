@@ -280,6 +280,7 @@ impl State {
             let mut drawlist = Vec::new();
 
             let mut drawn: u32 = 0;
+            // TODO: drop meshes that are continuously culled for 30s or so
             let mut culled: u32 = 0;
 
             for (_, mesh) in &self.mapblock_meshes {
