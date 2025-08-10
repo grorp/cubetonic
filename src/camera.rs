@@ -20,15 +20,13 @@ impl CameraParams {
         glam::Mat4::look_to_lh(self.pos, self.dir, Self::WORLD_UP)
     }
 
-    fn build_view_proj_matrix(&self) -> glam::Mat4 {
-        let view = self.build_view_matrix();
-        let proj = glam::Mat4::perspective_lh(
+    fn build_proj_matrix(&self) -> glam::Mat4 {
+        glam::Mat4::perspective_lh(
             self.fov_y,
             self.size.width as f32 / self.size.height as f32,
             self.z_near,
             self.z_far,
-        );
-        proj * view
+        )
     }
 }
 
@@ -39,6 +37,19 @@ struct CameraUniform {
     view_proj: [f32; 16],
     fog_color: [f32; 3],
     z_far: f32,
+}
+
+impl CameraUniform {
+    fn from_params(params: &CameraParams) -> Self {
+        let view = params.build_view_matrix();
+        let proj = params.build_proj_matrix();
+        CameraUniform {
+            view: view.to_cols_array(),
+            view_proj: (proj * view).to_cols_array(),
+            fog_color: params.fog_color.to_array(),
+            z_far: params.z_far,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -52,13 +63,7 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(device: &wgpu::Device, params: CameraParams) -> Camera {
-        let uniform = CameraUniform {
-            view: params.build_view_matrix().to_cols_array(),
-            view_proj: params.build_view_proj_matrix().to_cols_array(),
-            fog_color: params.fog_color.to_array(),
-            z_far: params.z_far,
-        };
-
+        let uniform = CameraUniform::from_params(&params);
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Camera buffer"),
             contents: bytemuck::cast_slice(&[uniform]),
@@ -98,11 +103,7 @@ impl Camera {
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue) {
-        self.uniform.view = self.params.build_view_matrix().to_cols_array();
-        self.uniform.view_proj = self.params.build_view_proj_matrix().to_cols_array();
-        self.uniform.fog_color = self.params.fog_color.to_array();
-        self.uniform.z_far = self.params.z_far;
-
+        self.uniform = CameraUniform::from_params(&self.params);
         queue.write_buffer(
             &self.uniform_buffer,
             0,
