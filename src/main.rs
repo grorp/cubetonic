@@ -279,18 +279,29 @@ impl State {
             }
             let mut drawlist = Vec::new();
 
-            let mut culled: u32 = 0;
             let mut drawn: u32 = 0;
+            let mut culled: u32 = 0;
+            let mut culled_extra: u32 = 0;
 
             for (_, mesh) in &self.mapblock_meshes {
                 if mesh.num_indices == 0 {
                     continue;
                 }
-                let bounding_sphere = mesh.bounding_sphere.as_ref().unwrap();
-                if !bounding_sphere.is_on_frustum(&self.frustum) {
+
+                let sphere = mesh.bounding_sphere.as_ref().unwrap();
+
+                if !sphere.is_on_frustum(&self.frustum) {
                     culled += 1;
                     continue;
                 }
+
+                let distance_sq = self.camera.params.pos.distance_squared(sphere.center);
+                let max_distance = Self::VIEW_DISTANCE + sphere.radius;
+                if distance_sq > max_distance * max_distance {
+                    culled_extra += 1;
+                    continue;
+                }
+
                 drawn += 1;
                 drawlist.push(mesh);
             }
@@ -305,8 +316,8 @@ impl State {
             }
 
             println!(
-                "dtime: {:.4}; drawn = {}; culled = {}",
-                dtime, drawn, culled
+                "dtime: {:.4}; drawn = {}; culled = {}; culled_extra = {}",
+                dtime, drawn, culled, culled_extra
             );
         }
 
