@@ -281,7 +281,6 @@ impl State {
 
             let mut drawn: u32 = 0;
             let mut culled: u32 = 0;
-            let mut culled_extra: u32 = 0;
 
             for (_, mesh) in &self.mapblock_meshes {
                 if mesh.num_indices == 0 {
@@ -290,15 +289,18 @@ impl State {
 
                 let sphere = mesh.bounding_sphere.as_ref().unwrap();
 
-                if !sphere.is_on_frustum(&self.frustum) {
+                // TODO: this filters out some blocks the frustum culling doesn't,
+                // but there are no visible glitches.
+                // is the frustum culling buggy / too conservative?
+                let distance_sq = self.camera.params.pos.distance_squared(sphere.center);
+                let max_distance = Self::VIEW_DISTANCE + sphere.radius;
+                if distance_sq > max_distance * max_distance {
                     culled += 1;
                     continue;
                 }
 
-                let distance_sq = self.camera.params.pos.distance_squared(sphere.center);
-                let max_distance = Self::VIEW_DISTANCE + sphere.radius;
-                if distance_sq > max_distance * max_distance {
-                    culled_extra += 1;
+                if !sphere.is_on_frustum(&self.frustum) {
+                    culled += 1;
                     continue;
                 }
 
@@ -316,8 +318,8 @@ impl State {
             }
 
             println!(
-                "dtime: {:.4}; drawn = {}; culled = {}; culled_extra = {}",
-                dtime, drawn, culled, culled_extra
+                "dtime: {:.4}; drawn = {}; culled = {}",
+                dtime, drawn, culled
             );
         }
 
