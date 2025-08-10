@@ -1,13 +1,14 @@
-use std::f32::consts::PI;
 use wgpu::util::DeviceExt;
 
 #[derive(Debug)]
 pub struct CameraParams {
     pub pos: glam::Vec3,
     pub dir: glam::Vec3,
+    pub fov_y: f32,
     pub size: winit::dpi::PhysicalSize<u32>,
     pub fog_color: glam::Vec3,
-    pub view_distance: f32,
+    pub z_near: f32,
+    pub z_far: f32,
 }
 
 impl CameraParams {
@@ -18,10 +19,10 @@ impl CameraParams {
     fn build_view_proj_matrix(&self) -> glam::Mat4 {
         let view = self.build_view_matrix();
         let proj = glam::Mat4::perspective_lh(
-            PI * 0.4,
+            self.fov_y,
             self.size.width as f32 / self.size.height as f32,
-            0.1,
-            self.view_distance,
+            self.z_near,
+            self.z_far,
         );
         proj * view
     }
@@ -33,7 +34,7 @@ struct CameraUniform {
     view: [f32; 16],
     view_proj: [f32; 16],
     fog_color: [f32; 3],
-    view_distance: f32,
+    z_far: f32,
 }
 
 #[derive(Debug)]
@@ -51,7 +52,7 @@ impl Camera {
             view: params.build_view_matrix().to_cols_array(),
             view_proj: params.build_view_proj_matrix().to_cols_array(),
             fog_color: params.fog_color.to_array(),
-            view_distance: params.view_distance,
+            z_far: params.z_far,
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -96,7 +97,7 @@ impl Camera {
         self.uniform.view = self.params.build_view_matrix().to_cols_array();
         self.uniform.view_proj = self.params.build_view_proj_matrix().to_cols_array();
         self.uniform.fog_color = self.params.fog_color.to_array();
-        self.uniform.view_distance = self.params.view_distance;
+        self.uniform.z_far = self.params.z_far;
 
         queue.write_buffer(
             &self.uniform_buffer,

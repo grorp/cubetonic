@@ -7,6 +7,7 @@ use luanti_protocol::types::DrawType;
 use tokio::sync::mpsc;
 use wgpu::util::DeviceExt;
 
+use crate::frustum::BoundingSphere;
 use crate::luanti_client::ClientToMainEvent;
 use crate::map::{LuantiMap, MeshgenMapData, NEIGHBOR_DIRS};
 use crate::media::{MediaManager, NodeTextureManager};
@@ -133,11 +134,6 @@ impl Vertex {
 struct Mesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-}
-
-pub struct BoundingSphere {
-    pub center: Vec3,
-    pub radius: f32,
 }
 
 /// A finished mapblock mesh that has been uploaded to the GPU.

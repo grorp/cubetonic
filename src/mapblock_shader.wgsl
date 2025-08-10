@@ -4,7 +4,7 @@ struct CameraUniform {
     // order of the following two is intentional to avoid needing additional
     // alignment
     fog_color: vec3<f32>,
-    view_distance: f32,
+    z_far: f32,
 }
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
@@ -81,7 +81,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // +y = 1.0
 
     let fog_color = camera.fog_color;
-    let fog_end = camera.view_distance;
+    let fog_end = camera.z_far;
     let fog_start = fog_end * 0.8;
 
     let distance = length(in.view_position);

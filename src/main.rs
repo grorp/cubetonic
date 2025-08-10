@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::f32::consts::PI;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,6 +14,7 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
 use luanti_client::LuantiClientRunner;
 
+use crate::frustum::Frustum;
 use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
 use crate::media::NodeTextureData;
 use crate::meshgen::MapblockMesh;
@@ -20,6 +22,7 @@ use crate::texture::MyTexture;
 
 mod camera;
 mod camera_controller;
+mod frustum;
 mod luanti_client;
 mod map;
 mod media;
@@ -115,9 +118,11 @@ impl State {
                 // These will be overwritten by the CameraController anyway
                 pos: Vec3::ZERO,
                 dir: Vec3::ZERO,
+                fov_y: PI * 0.4,
                 size,
                 fog_color: Self::BG_COLOR,
-                view_distance: Self::VIEW_DISTANCE,
+                z_near: 0.1,
+                z_far: Self::VIEW_DISTANCE,
             },
         );
         let camera_controller = camera_controller::CameraController::new();
@@ -261,22 +266,22 @@ impl State {
             pass.set_bind_group(0, self.camera.bind_group(), &[]);
             pass.set_bind_group(1, &mapblock_texture_data.bind_group, &[]);
 
+            let frustum = Frustum::new(&self.camera.params);
             let mut drawlist = Vec::new();
 
-            let camera_pos = self.camera.params.pos;
+            let mut culled: u32 = 0;
+            let mut drawn: u32 = 0;
 
             for (_, mesh) in &self.mapblock_meshes {
                 if mesh.num_indices == 0 {
                     continue;
                 }
-
-                let sphere = mesh.bounding_sphere.as_ref().unwrap();
-                let distance_sq = camera_pos.distance_squared(sphere.center);
-                let max_distance = Self::VIEW_DISTANCE + sphere.radius;
-                if distance_sq > max_distance * max_distance {
+                let bounding_sphere = mesh.bounding_sphere.as_ref().unwrap();
+                if !bounding_sphere.is_on_frustum(&frustum) {
+                    culled += 1;
                     continue;
                 }
-
+                drawn += 1;
                 drawlist.push(mesh);
             }
 
@@ -288,6 +293,11 @@ impl State {
                 pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                 pass.draw_indexed(0..mesh.num_indices, 0, 0..1);
             }
+
+            println!(
+                "dtime: {:.4}; drawn = {}; culled = {}",
+                dtime, drawn, culled
+            );
         }
 
         drop(pass);
