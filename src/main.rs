@@ -15,6 +15,7 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 use luanti_client::LuantiClientRunner;
 
 use crate::frustum::Frustum;
+use crate::lua::LuaController;
 use crate::luanti_client::{ClientToMainEvent, MainToClientEvent};
 use crate::media::NodeTextureData;
 use crate::meshgen::MapblockMesh;
@@ -23,6 +24,7 @@ use crate::texture::MyTexture;
 mod camera;
 mod camera_controller;
 mod frustum;
+mod lua;
 mod luanti_client;
 mod map;
 mod media;
@@ -59,6 +61,8 @@ struct State {
 
     frustum: Frustum,
     frustum_frozen: bool,
+
+    lua: LuaController,
 }
 
 impl State {
@@ -167,6 +171,8 @@ impl State {
 
             frustum,
             frustum_frozen: false,
+
+            lua: LuaController::new().unwrap(),
         };
         state.configure_surface();
         state
